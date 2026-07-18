@@ -1,0 +1,37 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj
+*.xcworkspace
+
+# Package.resolved is committed deliberately — it pins GRDB so a fresh clone
+# builds against the same version. Remove that line from here if you'd rather
+# float.
+
+# Build output. `./make-app.sh` regenerates it.
+DriveAtlas.app/
+
+# Generated from the source PNG by Tools/makeicon.swift on every build where the
+# art is newer. The PNG is the source of truth and stays in the repo.
+AppIcon.icns
+*.iconset/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Xcode user state, if you open Package.swift in Xcode
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
