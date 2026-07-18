@@ -4,7 +4,7 @@ Catalogs what's on your external drives so you can find things without plugging
 each one in.
 
 Plug a drive in and DriveAtlas records its folder structure. After that you can
-browse and search that drive whether or not it's actually connected — so
+browse and search that drive whether or not it's actually connected, so
 "which disk has the 2019 wedding photos?" is a search box instead of a pile of
 enclosures and a free afternoon.
 
@@ -29,7 +29,7 @@ macOS 14+, Swift 6. A SwiftUI menu bar app and a CLI, both over the same core.
 ## Install
 
 Requires Xcode 16+ (for the Swift 6 toolchain). No other dependencies to install
-by hand — GRDB is fetched by SwiftPM.
+by hand and GRDB is fetched by SwiftPM.
 
 ```sh
 ./make-app.sh release
@@ -40,7 +40,7 @@ Drag it to `/Applications` if you want it permanently. `./make-app.sh` on its ow
 builds the debug configuration, which is fine for trying it but noticeably slower
 on large drives.
 
-There's no Xcode project, and you don't need one — an `.app` is just a directory
+There's no Xcode project, and you don't need one. An `.app` is just a directory
 with an `Info.plist`, so `make-app.sh` assembles one from the SwiftPM build
 product. You can still `open Package.swift` in Xcode if you want the GUI editor.
 
@@ -70,12 +70,12 @@ background. The menu bar icon shows scan progress. You can browse the cached tre
 of any other drive while a scan runs.
 
 **The sidebar** lists every drive you've ever connected, with type (SSD/HDD),
-capacity, free space, and a ⚠️ on SSDs over five years old. Right-click to forget
+capacity, free space, and a warning triangle on SSDs over five years old. Right-click to forget
 one.
 
 **Backup Check** (top of the sidebar) compares folders across every drive and
-answers the question a pile of disks makes hard: *what do I have exactly one copy
-of?* It also lists what's duplicated across drives, with how much space you'd
+answers the question a pile of disks makes hard: _what do I have exactly one copy
+of?_ It also lists what's duplicated across drives, with how much space you'd
 reclaim by keeping one copy.
 
 It matches on folder **name and size** — nothing reads file contents. A match
@@ -83,11 +83,11 @@ means "probably the same thing, worth checking", never a verified backup. Folder
 below 100 MB are ignored, and if a folder has no second copy its children aren't
 listed separately.
 
-**The search field** searches folder names across *every* catalogued drive,
+**The search field** searches folder names across _every_ catalogued drive,
 connected or not, and each hit tells you which drive it's on. This is the feature
 the app exists for.
 
-**Drive info** (the ⓘ button) is where you correct what macOS couldn't detect —
+**Drive info** (the ⓘ button) is where you correct what macOS couldn't detect
 the SSD/HDD type, and the purchase date. Both matter; see
 [Design notes](#design-notes).
 
@@ -96,11 +96,11 @@ the SSD/HDD type, and the purchase date. Both matter; see
 Toggle in the toolbar. They fail in opposite directions, which is why all three
 exist.
 
-| View | What it shows | Best for |
-|---|---|---|
-| **List** | Indented, expandable rows | Folders with many children; precise reading |
-| **Map** | Node-link diagram, drive as root box | Seeing the shape of a deep tree |
-| **Sizes** | Treemap, area = disk usage | "What's actually filling this drive?" |
+| View      | What it shows                        | Best for                                    |
+| --------- | ------------------------------------ | ------------------------------------------- |
+| **List**  | Indented, expandable rows            | Folders with many children; precise reading |
+| **Map**   | Node-link diagram, drive as root box | Seeing the shape of a deep tree             |
+| **Sizes** | Treemap, area = disk usage           | "What's actually filling this drive?"       |
 
 **List** sorts by name, size, file count, or date created/modified, ascending or
 descending. Each level sorts independently, so the tree stays a tree. The
@@ -109,13 +109,13 @@ trailing column always shows whatever you're sorting by.
 **Map** opens at the drive's top level. Click a box to expand or collapse it.
 Two-finger scroll or drag to pan; pinch, ⌘-scroll, or ⌘=/⌘− to zoom (⌘0 resets);
 zoom anchors on the pointer. The control bar has expand-all, collapse, an
-orientation toggle (the tree can grow rightwards or downwards — rightwards suits
+orientation toggle (the tree can grow rightwards or downwards, rightwards suits
 wide, shallow drives), and fit-to-window.
 
 **Sizes** — click a rectangle to drill into it, breadcrumbs to come back out.
 Colour is the dominant file type, with a legend along the bottom.
 
-**Hovering any folder**, in any view, shows what file types it contains — split
+**Hovering any folder**, in any view, shows what file types it contains and split
 into everything below it and files loose directly inside it.
 
 ---
@@ -138,7 +138,7 @@ swift build
 ./.build/debug/driveatlas db                 # catalog location and size
 ```
 
-`volumes` is the diagnostic one — it shows every mounted volume and why each was
+`volumes` is the diagnostic one and it shows every mounted volume and why each was
 accepted or rejected, which is how you check the disk-image filter is working.
 
 Both app and CLI share `~/Library/Application Support/DriveAtlas/catalog.sqlite`.
@@ -163,20 +163,20 @@ DriveAtlas never modifies, moves, or deletes anything on the drives it scans.
 That's a property worth being precise about, since the app exists to be pointed
 at archives.
 
-**The scanner — the only component that touches your drives — contains zero
+**The scanner is the only component that touches your drives and contains zero
 mutating filesystem calls.** It reads directory listings and metadata
 (`contentsOfDirectory`, `resourceValues`); it never opens file contents at all.
 
 **Everything the app writes goes to its own directory.** The complete list of
 write targets in the codebase:
 
-| What | Where |
-|---|---|
-| The catalog database (SQLite) | `~/Library/Application Support/DriveAtlas/` |
-| Debug snapshots (`DebugBridge`) | `…/DriveAtlas/debug/` |
-| One-time rename migration | inside `Application Support` only |
+| What                            | Where                                       |
+| ------------------------------- | ------------------------------------------- |
+| The catalog database (SQLite)   | `~/Library/Application Support/DriveAtlas/` |
+| Debug snapshots (`DebugBridge`) | `…/DriveAtlas/debug/`                       |
+| One-time rename migration       | inside `Application Support` only           |
 
-**The only subprocess it launches is `diskutil info`** — purely informational.
+**The only subprocess it launches is `diskutil info`** is purely informational.
 No code path invokes mount, unmount, erase, or partition operations.
 
 **"Forget drive" and rescans delete database rows**, never files on any volume.
@@ -189,8 +189,8 @@ grep -rn -E "removeItem|moveItem|copyItem|createDirectory|replaceItem|createFile
 grep -rn -E "Process\(\)|executableURL" Sources/
 ```
 
-Two honest caveats. First, **macOS itself touches drives you mount** — access
-times, and `.Spotlight-V100`/`.fseventsd` on writable volumes — the moment they
+Two honest caveats. First, **macOS itself touches drives you mount** in access
+times, and `.Spotlight-V100`/`.fseventsd` on writable volumes the moment they
 connect, with or without DriveAtlas running. The app adds nothing on top.
 Second, **this is an audit, not an OS-enforced guarantee**: the app runs
 unsandboxed, so only code review upholds the property. App Sandbox with the
@@ -209,15 +209,15 @@ see [Not built yet](#not-built-yet).
                      (diskutil: SSD, size)
 ```
 
-| Component | Responsibility |
-|---|---|
-| `Store` | SQLite via GRDB — drives, folder tree, extension stats, FTS5 search |
-| `Scanner` | Background actor that walks a volume and records its structure |
+| Component       | Responsibility                                                      |
+| --------------- | ------------------------------------------------------------------- |
+| `Store`         | SQLite via GRDB — drives, folder tree, extension stats, FTS5 search |
+| `Scanner`       | Background actor that walks a volume and records its structure      |
 | `DriveMetadata` | Drive type/size/protocol from `diskutil`, plus disk-image filtering |
-| `VolumeWatcher` | Mount/unmount notifications |
-| `DriveCatalog` | Ties them together — plug in a drive, it gets catalogued |
-| `AppModel` | Observable state for the UI |
-| `driveatlas` | CLI over the same core |
+| `VolumeWatcher` | Mount/unmount notifications                                         |
+| `DriveCatalog`  | Ties them together — plug in a drive, it gets catalogued            |
+| `AppModel`      | Observable state for the UI                                         |
+| `driveatlas`    | CLI over the same core                                              |
 
 **The scan** walks the volume depth-first, inserting each folder on the way down
 (so children have a parent to reference) and writing size and file-type rollups
@@ -225,7 +225,7 @@ on the way back up. Rollups are accumulated during the walk because computing
 them afterwards would mean a second full pass.
 
 **A failed scan rolls back.** The delete-and-rebuild happens in one transaction,
-and the scan aborts — preserving the previous catalogue — if the volume's root
+and the scan aborts, preserving the previous catalogue and if the volume's root
 can't be read or the volume is gone by commit time. Without that, unplugging a
 drive mid-scan silently replaced its catalogue with a nearly-empty husk: every
 directory read failed and each was recorded as an empty folder.
@@ -245,13 +245,13 @@ answers "what kind of things are in here" rather than "find me this filename".
 
 ## Design notes
 
-The parts where reality didn't cooperate. Most of these are guarded by tests —
+The parts where reality didn't cooperate. Most of these are guarded by tests and
 if you change one, expect a test to complain.
 
 **Directory mtimes don't propagate up.** Adding a file at `a/b/c/file.txt` bumps
 `c`'s mtime and leaves `a` and `b` untouched. So a rescan can't prune unchanged
 subtrees — it must always traverse fully. Incremental rescanning can only ever
-avoid *writes*, never I/O. `ScannerTests.rescanCatchesDeepChange` pins this down.
+avoid _writes_, never I/O. `ScannerTests.rescanCatchesDeepChange` pins this down.
 
 **SSD vs HDD is often unknowable over USB.** `diskutil` omits the `SolidState`
 key entirely for many enclosures. That's stored as `nil` (unknown), never
@@ -260,19 +260,19 @@ key entirely for many enclosures. That's stored as `nil` (unknown), never
 **Drive age has no reliable source, and `firstSeenAt` is not one.** SMART
 power-on hours aren't exposed over USB on macOS. That leaves two honest signals,
 and `Drive.AgeBasis` encodes which is which: `purchasedOn` (user-entered,
-trustworthy) and `volumeCreatedAt` (filesystem creation — a lower bound only,
+trustworthy) and `volumeCreatedAt` (filesystem creation, a lower bound only,
 since it resets on every reformat).
 
-`firstSeenAt` records when *this app* first saw the drive and says nothing about
+`firstSeenAt` records when _this app_ first saw the drive and says nothing about
 the hardware. An earlier version fell back to it, so a drive bought in 2018 and
-plugged in for the first time today reported as brand new — and the five-year SSD
+plugged in for the first time today reported as brand new and the five-year SSD
 wear warning could never fire for precisely the drives it existed to warn about.
 Age is now `nil` when there's no basis, and an SSD without a purchase date
 reports `needsAgeInfo` rather than silently reading as healthy.
 
 **Bundles are leaves, but only some get sized.** `.photoslibrary` and `.app` are
 user data, so they're measured with a flat walk but not recorded internally.
-`node_modules`, `.git` and friends are recorded as a single node and *not* sized —
+`node_modules`, `.git` and friends are recorded as a single node and _not_ sized,
 walking them to measure is exactly the cost being avoided. On one `~/Projects`
 folder this took the count from 36,755 folders to 4,882.
 
@@ -281,8 +281,8 @@ under `/Volumes` looking exactly like real drives. They're rejected on
 `BusProtocol == "Disk Image"`. Run `driveatlas volumes` to see the filter work.
 
 **Identity is the volume UUID**, falling back to `name:size` for filesystems that
-don't expose one (exFAT often doesn't). The fallback is weaker — two identical
-drives would collide — but beats refusing to catalog them.
+don't expose one (exFAT often doesn't). The fallback is weaker, two identical
+drives would collide but beats refusing to catalog them.
 
 **The tree loads lazily.** A drive can hold hundreds of thousands of folders, so
 `TreeNode` fetches children on expand rather than materialising the whole tree.
@@ -291,13 +291,13 @@ That's also why the list is flattened into plain rows rather than using
 
 **The map caps siblings at 40 per node**, with a "+N folders" marker. Past that
 the diagram stops being readable well before it stops being fast. Children are
-sorted by size before the cap applies, so it always hides the smallest — sorting
+sorted by size before the cap applies, so it always hides the smallest sorting
 by name and truncating meant the biggest folder on the drive could vanish for
 starting with "z". Hovering the marker lists what's behind it. That marker means
-*folders*; files are never nodes in the map.
+_folders_; files are never nodes in the map.
 
-**The treemap uses exactly four colours.** A treemap is an "all-pairs" case — any
-rectangle can end up beside any other — and the categorical palette stops
+**The treemap uses exactly four colours.** A treemap is an "all-pairs" case and any
+rectangle can end up beside any other and the categorical palette stops
 clearing colourblind separation past four slots. So the drive's four biggest file
 types get hues and everything else folds into a neutral "Other". A fifth hue
 would look fine to most people and be unreadable to some. Slots are assigned per
@@ -306,24 +306,24 @@ drive, so a colour means the same thing however deep you drill.
 Palette values come from a validated reference palette, checked under `--pairs
 all` in both light and dark modes. Two warnings came back and both are handled by
 the same measure: light-mode magenta and yellow fall under 3:1 against the
-surface (needs "relief" — visible labels), and the dark-mode yellow/green pair
+surface (needs "relief", visible labels), and the dark-mode yellow/green pair
 lands in the 6–8 CVD band (legal only with secondary encoding). Every tile
 therefore carries a visible label, tiles are separated by a 2px gap, and a legend
 is always present. **Don't remove the tile labels.**
 
 **Creation dates arrived in schema v3**, after the first scans were written.
 Folders catalogued before that carry `NULL` and show as "unknown" until their
-drive is rescanned. Sorting pushes unknowns to the end in *both* directions — a
+drive is rescanned. Sorting pushes unknowns to the end in _both_ directions, a
 date we don't have is unknown, not oldest.
 
 **Backup Check matches on name and size, never content.** Hashing files would
-mean reading every byte on every drive — hours per drive, and it'd need both
+mean reading every byte on every drive, hours per drive, and it'd need both
 drives present at once to compare. Name plus size within 5% catches real copies
-(they're rarely byte-identical — a stray `.DS_Store` is enough) while rejecting
+(they're rarely byte-identical, a stray `.DS_Store` is enough) while rejecting
 the "everyone has a Photos folder" false positive, since two folders called
 Photos that differ wildly in size aren't copies. The UI says so where you read
-the result rather than burying it in a tooltip. Two copies on the *same* drive
-don't count — that protects you from nothing if the drive dies.
+the result rather than burying it in a tooltip. Two copies on the _same_ drive
+don't count and that protects you from nothing if the drive dies.
 
 **Used space is capacity minus free, not the scan total.** The scan skips hidden
 files, `node_modules`-style directories and anything unreadable, so its byte
@@ -339,7 +339,7 @@ two `.raf` files in the test fixture would report 900 bytes instead of 300.
 
 ## Development
 
-Internal module names keep the original working title (`DriveMapperCore` etc.) —
+Internal module names keep the original working title (`DriveMapperCore` etc.),
 renaming every target and directory would churn the whole repo for zero user
 benefit. Everything user-facing says DriveAtlas.
 
@@ -361,7 +361,7 @@ swift test             # 46 tests
 ./make-app.sh release  # the .app bundle
 ```
 
-Domain rules live in `DriveMapperCore` specifically so they can be tested — the
+Domain rules live in `DriveMapperCore` specifically so they can be tested and the
 app target has no test coverage, which is how the drive-age bug survived as long
 as it did. If you find yourself writing a rule in `AppModel.swift`, consider
 whether it belongs one layer down.
@@ -374,7 +374,7 @@ makes risky, and they're the ones that will catch a regression in the walk.
 
 `DebugBridge` (app side) plus `driveatlas debug <cmd>` (CLI side) let the app be
 driven and inspected from a terminal that has no Screen Recording permission —
-an app photographing *its own* windows needs none:
+an app photographing _its own_ windows needs none:
 
 ```sh
 driveatlas debug select-backup   # drive the sidebar selection
@@ -386,7 +386,7 @@ driveatlas debug dump:tag        # view hierarchy with frames — the reliable s
 Output lands in `~/Library/Application Support/DriveAtlas/debug/`. The frame
 dumps are what found the Backup Check layout bug: `VStack { header; List }` and
 `List.safeAreaInset(edge: .top)` both make a split-view detail report a huge
-ideal height, which the `NavigationSplitView` adopts and centres — shoving the
+ideal height, which the `NavigationSplitView` adopts and centres, shoving the
 whole window contents (sidebar included) out of frame, permanently. Hence the
 rule in `BackupCheckView`: the detail root is one bare `List` with everything as
 rows. Verify any layout change there with a `dump:` before trusting it.
@@ -395,8 +395,8 @@ rows. Verify any layout change there with a `dump:` before trusting it.
 
 `Tools/makeicon.swift` exists because source art is usually opaque RGB on a white
 background, which macOS would render as a white tile in the Dock. It floods the
-background out *from the image border* — keying on white globally would also
-punch holes in white details inside the art — squares the crop around the centre
+background out _from the image border_, keying on white globally would also
+punch holes in white details inside the art, squares the crop around the centre
 (the drop shadow makes the tight bounding box non-square, and stretching it into
 a square canvas distorts the art), and insets it to the 824-on-1024 proportion
 macOS uses so it sits the same size as other Dock icons.
