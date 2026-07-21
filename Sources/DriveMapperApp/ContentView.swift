@@ -136,6 +136,7 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented)
             .labelStyle(.iconOnly)
+            .tint(AppColor.accent)   // selection control keeps the app accent
             // Disabled, NOT hidden. An earlier version set opacity to 0 here,
             // which left the toolbar with nothing visible on Backup Check —
             // AppKit then collapsed the toolbar row entirely, shortening the
@@ -167,29 +168,32 @@ struct ContentView: View {
             .disabled(!(showsDriveControls && mode == .list))
         }
 
-        ToolbarItem(placement: .primaryAction) {
-            // One Button whose action and label vary, rather than two Buttons in
-            // an if/else. Branching produces different view identities, so the
-            // toolbar item is torn down and rebuilt on every selection change.
+        ToolbarItem(placement: .automatic) {
+            // On-demand rescan of the selected drive — the "I just deleted
+            // duplicates and want fresh numbers" button. Disabled while that
+            // drive is already scanning; complains helpfully if it's unplugged.
             Button {
-                if model.selection == .backupCheck {
-                    model.runCopyAnalysis()
-                } else {
-                    showInspector.toggle()
-                }
+                if let drive = model.selectedDrive { model.rescan(drive) }
             } label: {
-                Label(
-                    model.selection == .backupCheck ? "Refresh" : "Drive Info",
-                    systemImage: model.selection == .backupCheck
-                        ? "arrow.clockwise"
-                        : "info.circle"
-                )
+                Label("Rescan", systemImage: "arrow.triangle.2.circlepath")
             }
             .disabled(
-                model.selection == .backupCheck
-                    ? model.isAnalysing
-                    : model.selectedDrive == nil
+                !showsDriveControls
+                    || model.selectedDrive.map { model.scanStatus(for: $0) != nil } ?? true
             )
+            .help("Rescan this drive now — it must be connected")
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            // No Refresh button for Backup Check: the analysis recomputes itself
+            // when scans finish, when a drive is forgotten, and on first visit —
+            // and a second circular-arrow button next to Rescan read as a riddle.
+            Button {
+                showInspector.toggle()
+            } label: {
+                Label("Drive Info", systemImage: "info.circle")
+            }
+            .disabled(model.selectedDrive == nil)
         }
     }
 
@@ -225,22 +229,48 @@ struct DriveSidebar: View {
     @State private var driveToForget: Drive?
 
     var body: some View {
-        List(selection: $model.selection) {
+        // No `selection:` binding on the List, deliberately.
+        //
+        // With one, macOS paints its own filled capsule for the selected row —
+        // and `listRowBackground` draws *behind* that, so a custom treatment
+        // just adds a bar underneath the system fill rather than replacing it.
+        // Rows are plain buttons that set the selection themselves, which
+        // leaves this view in sole control of what "selected" looks like.
+        //
+        // Cost: the sidebar loses List's built-in arrow-key navigation. The
+        // quick-search panel (⌃⌥Space) is the keyboard path through drives, and
+        // it implements ↑↓ itself.
+        List {
             Section("Overview") {
-                Label("Backup Check", systemImage: "checkmark.shield")
-                    .tag(AppModel.Selection.backupCheck)
+                SidebarItem(
+                    isSelected: model.selection == .backupCheck,
+                    action: { model.selection = .backupCheck }
+                ) {
+                    Label("Backup Check", systemImage: "checkmark.shield")
+                }
             }
 
             Section("Drives") {
                 ForEach(model.drives) { drive in
-                    DriveRow(drive: drive, status: model.scanStatus(for: drive))
-                        .tag(AppModel.Selection.drive(drive.id ?? -1))
-                        .contextMenu {
-                            // Ellipsis: this asks before doing anything.
-                            Button("Forget \(drive.name)…", role: .destructive) {
-                                driveToForget = drive
-                            }
+                    SidebarItem(
+                        isSelected: model.selection == .drive(drive.id ?? -1),
+                        action: { model.selection = .drive(drive.id ?? -1) }
+                    ) {
+                        DriveRow(drive: drive, status: model.scanStatus(for: drive))
+                    }
+                    .contextMenu {
+                        Button("Rescan Now") {
+                            model.rescan(drive)
                         }
+                        .disabled(model.scanStatus(for: drive) != nil)
+
+                        Divider()
+
+                        // Ellipsis: this asks before doing anything.
+                        Button("Forget \(drive.name)…", role: .destructive) {
+                            driveToForget = drive
+                        }
+                    }
                 }
             }
         }
@@ -272,7 +302,7 @@ struct DriveRow: View {
             Image(systemName: "externaldrive.fill")
                 .font(.title3)
                 // Connected drives are the ones seen in the last minute or so.
-                .foregroundStyle(isConnected ? Color.accentColor : .secondary)
+                .foregroundStyle(isConnected ? AppColor.accent : .secondary)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(drive.name).lineLimit(1)
@@ -298,7 +328,7 @@ struct DriveRow: View {
                         CapacityBar(fraction: fraction, nearlyFull: drive.isNearlyFull)
                         Text("\(formatBytes(free)) free")
                             .font(.caption2.monospacedDigit())
-                            .foregroundStyle(drive.isNearlyFull ? Color.orange : Color.secondary)
+                            .foregroundStyle(drive.isNearlyFull ? AppColor.warning : Color.secondary)
                     }
                 }
             }
@@ -316,6 +346,35 @@ struct DriveRow: View {
 
     private var isConnected: Bool {
         Date().timeIntervalSince(drive.lastSeenAt) < 60
+    }
+}
+
+/// A sidebar row that draws its own selection via `SelectionBackground` — the
+/// same treatment as the quick-search panel.
+///
+/// The system's filled capsule painted the whole row in the selection colour,
+/// which reads far heavier than "this is the current item" needs to, and forced
+/// white label text onto a saturated fill.
+struct SidebarItem<Content: View>: View {
+    let isSelected: Bool
+    let action: () -> Void
+    @ViewBuilder let content: Content
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // Same component the quick-search panel uses, so "selected" looks
+        // identical in both places.
+        .listRowBackground(
+            SelectionBackground(isSelected: isSelected, isHovered: isHovered)
+        )
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -516,7 +575,7 @@ struct SearchResultsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Image(systemName: hit.folder.isLeafBundle ? "shippingbox" : "folder")
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(AppColor.accent)
                             Text(hit.folder.name).fontWeight(.medium)
                             Spacer()
                             Text(formatBytes(hit.folder.totalBytes))
@@ -528,7 +587,7 @@ struct SearchResultsView: View {
                             // exists to answer, so it leads.
                             Label(hit.driveName, systemImage: "externaldrive")
                                 .font(.caption)
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(AppColor.accent)
                             Text(hit.folder.path.isEmpty ? "/" : hit.folder.path)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

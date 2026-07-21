@@ -243,7 +243,7 @@ struct FolderRowView: View {
                 .opacity(node.hasChildren ? 1 : 0)
 
             Image(systemName: node.folder.isLeafBundle ? "shippingbox" : "folder")
-                .foregroundStyle(node.folder.isLeafBundle ? .orange : .accentColor)
+                .foregroundStyle(node.folder.isLeafBundle ? Color.secondary : AppColor.accent)
                 .font(.callout)
 
             Text(node.folder.name)

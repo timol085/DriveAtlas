@@ -58,6 +58,7 @@ struct BackupCheckView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                    .tint(AppColor.accent)
                     .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
                     // No separator under a control — the line rendered flush
                     // against the buttons and read as part of them. Separators
@@ -67,7 +68,13 @@ struct BackupCheckView: View {
 
                 Section {
                     if groups(in: analysis).isEmpty {
+                        // Still a list row (the bare-List rule from the balloon
+                        // bug), but dressed as a real empty state: full row
+                        // width so it centres itself, enough height to breathe,
+                        // and no separator line under a non-item.
                         emptyState
+                            .frame(maxWidth: .infinity, minHeight: 280)
+                            .listRowSeparator(.hidden)
                     } else {
                         ForEach(groups(in: analysis)) { group in
                             GroupRow(group: group, showsReclaim: tab == .duplicated)
@@ -114,7 +121,7 @@ struct BackupCheckView: View {
                     value: formatBytes(analysis.atRiskBytes),
                     label: "with no second copy",
                     detail: "\(analysis.atRisk.count) folders",
-                    tint: analysis.atRisk.isEmpty ? .secondary : .orange
+                    tint: analysis.atRisk.isEmpty ? .secondary : AppColor.warning
                 )
                 stat(
                     value: formatBytes(analysis.reclaimableBytes),
@@ -158,7 +165,7 @@ struct GroupRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Image(systemName: showsReclaim ? "doc.on.doc" : "exclamationmark.triangle")
-                    .foregroundStyle(showsReclaim ? Color.secondary : .orange)
+                    .foregroundStyle(showsReclaim ? Color.secondary : AppColor.warning)
                 Text(group.name)
                     .fontWeight(.medium)
                     .lineLimit(1)
@@ -187,10 +194,10 @@ struct GroupRow: View {
                 HStack(spacing: 6) {
                     Image(systemName: "externaldrive")
                         .font(.caption2)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(AppColor.accent)
                     Text(location.driveName)
                         .font(.caption)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(AppColor.accent)
                     Text(location.path)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -214,7 +221,7 @@ struct CapacityBar: View {
                 Capsule()
                     .fill(Color.secondary.opacity(0.2))
                 Capsule()
-                    .fill(nearlyFull ? Color.orange : Color.accentColor)
+                    .fill(nearlyFull ? AppColor.warning : AppColor.accent)
                     .frame(width: max(2, geo.size.width * fraction))
             }
         }

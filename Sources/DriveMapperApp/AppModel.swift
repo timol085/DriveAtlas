@@ -34,6 +34,12 @@ final class AppModel {
     let store: Store
     private let catalog: DriveCatalog
 
+    /// Fires after every activity event, scan-related or not. `StatusItemController`
+    /// uses this to repaint the menu-bar icon without polling — kept as a plain
+    /// closure rather than an @Observable property because the menu bar icon is
+    /// AppKit, not SwiftUI, and has nothing to observe.
+    var onActivityChanged: (() -> Void)?
+
     struct ScanStatus: Equatable {
         var foldersScanned: Int
         var currentPath: String
@@ -64,6 +70,9 @@ final class AppModel {
 
     func start() {
         DebugBridge.start(model: self)
+        // Rebuild the system Spotlight donations once per launch — picks up
+        // CLI-driven scans and heals any index drift.
+        SpotlightIndexer.reindexAll(store: store)
         catalog.start { [weak self] activity in
             guard let self else { return }
             switch activity {
@@ -77,12 +86,27 @@ final class AppModel {
                 self.scanStatus[name] = nil
                 self.refreshDrives()
                 self.rerunSearch()
+                // The copy analysis is now stale — the whole point of rescanning
+                // after deleting duplicates is seeing updated numbers. Recompute
+                // in place if the user is looking at it, otherwise just drop it
+                // so the next visit recomputes.
+                if self.selection == .backupCheck {
+                    self.copyAnalysis = nil
+                    self.runCopyAnalysis()
+                } else {
+                    self.copyAnalysis = nil
+                }
+                // Fresh catalog contents → fresh Spotlight donations.
+                if let drive = self.drives.first(where: { $0.name == name }) {
+                    SpotlightIndexer.reindex(drive: drive, store: self.store)
+                }
             case .scanFailed(let name, let error):
                 self.scanStatus[name] = nil
                 self.lastError = "\(name): \(error)"
             case .driveDisconnected:
                 self.refreshDrives()
             }
+            self.onActivityChanged?()
         }
     }
 
@@ -164,11 +188,40 @@ final class AppModel {
         }
     }
 
+    /// On-demand rescan of a connected drive. Explains itself when the drive
+    /// isn't plugged in instead of silently doing nothing.
+    func rescan(_ drive: Drive) {
+        guard scanStatus(for: drive) == nil else { return }
+        if !catalog.rescan(volumeUUID: drive.volumeUUID) {
+            lastError = "\(drive.name) isn't connected. Plug it in and it will be rescanned automatically."
+        }
+    }
+
+    /// Jump to a folder from an external entry point (a Spotlight result).
+    /// Selects its drive and surfaces it through search, which also shows any
+    /// same-named siblings on other drives — a feature, not a shortcut.
+    func reveal(folderId: Int64) {
+        guard let folder = try? store.folder(id: folderId),
+              let drive = drives.first(where: { $0.id == folder.driveId })
+        else {
+            lastError = "That folder is no longer in the catalog — it may have been rescanned away."
+            return
+        }
+        selection = .drive(drive.id ?? -1)
+        searchQuery = folder.name
+        rerunSearch()
+    }
+
     func forget(_ drive: Drive) {
         guard let id = drive.id else { return }
         do {
             try store.deleteDrive(id: id)
+            SpotlightIndexer.remove(volumeUUID: drive.volumeUUID)
             refreshDrives()
+            // The analysis still references the forgotten drive — drop it so the
+            // next Backup Check visit recomputes. This was the last reason the
+            // manual Refresh button existed.
+            copyAnalysis = nil
         } catch {
             lastError = "Couldn't forget drive: \(error.localizedDescription)"
         }
@@ -177,23 +230,27 @@ final class AppModel {
     // MARK: - Search
 
     func rerunSearch() {
-        let query = searchQuery
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
-            searchResults = []
-            return
-        }
+        searchResults = search(searchQuery)
+    }
+
+    /// Pure search, used by both the main window's search field and the
+    /// quick-search panel. Doesn't touch `searchQuery`/`searchResults` — the
+    /// panel calling this must never clobber whatever the main window has on
+    /// screen, and vice versa.
+    func search(_ query: String) -> [SearchHit] {
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
         do {
             let hits = try store.searchFolders(query)
             let namesById = Dictionary(
                 uniqueKeysWithValues: drives.compactMap { d in d.id.map { ($0, d.name) } }
             )
             // Which drive a hit is on is the entire point — never show a bare path.
-            searchResults = hits.map {
+            return hits.map {
                 SearchHit(folder: $0, driveName: namesById[$0.driveId] ?? "Unknown drive")
             }
         } catch {
             lastError = "Search failed: \(error.localizedDescription)"
-            searchResults = []
+            return []
         }
     }
 

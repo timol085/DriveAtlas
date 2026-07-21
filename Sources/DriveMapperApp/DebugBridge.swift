@@ -1,4 +1,5 @@
 import AppKit
+import CoreSpotlight
 import Foundation
 
 /// Local-only debug remote control.
@@ -22,7 +23,12 @@ enum DebugBridge {
     static let notificationName = Notification.Name("com.driveatlas.debug")
 
     private static weak var model: AppModel?
+    private static weak var quickSearch: QuickSearchController?
     private static var token: NSObjectProtocol?
+
+    static func attachQuickSearch(_ controller: QuickSearchController) {
+        quickSearch = controller
+    }
 
     static func start(model: AppModel) {
         Self.model = model
@@ -52,12 +58,82 @@ enum DebugBridge {
             // Flips the node map's growth direction, same as its toolbar button.
             let key = "graphHorizontal"
             UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: key), forKey: key)
+        case "loginstatus":
+            // SMAppService.mainApp reports on whatever process calls it — only
+            // meaningful read from inside the actual app bundle, never from a
+            // standalone `swift script.swift`, which is its own unbundled
+            // process with no registration of its own.
+            try? "\(LaunchAtLogin.isEnabled)".write(
+                to: debugDirectory().appending(path: "loginstatus.txt"),
+                atomically: true, encoding: .utf8
+            )
+        case "quicksearch:toggle":
+            quickSearch?.toggle()
+        case "quicksearch:show":
+            if quickSearch?.isVisible == false { quickSearch?.toggle() }
+        case "quicksearch:hide":
+            if quickSearch?.isVisible == true { quickSearch?.toggle() }
+        case "quicksearch:selection":
+            try? "\(quickSearch?.selectedIndex ?? -1)".write(
+                to: debugDirectory().appending(path: "selection.txt"),
+                atomically: true, encoding: .utf8
+            )
+        case let cmd where cmd.hasPrefix("quicksearch:move:"):
+            // Moves the selection the same way an arrow key would, without
+            // needing a synthesized keypress — compiling a throwaway Swift
+            // script to send one steals key focus and dismisses the panel.
+            if let delta = Int(cmd.dropFirst("quicksearch:move:".count)) {
+                quickSearch?.moveSelection(by: delta)
+            }
+        case "quicksearch:state":
+            try? "\(quickSearch?.isVisible ?? false)".write(
+                to: debugDirectory().appending(path: "quicksearchstate.txt"),
+                atomically: true, encoding: .utf8
+            )
+        case let cmd where cmd.hasPrefix("quicksearch:query:"):
+            quickSearch?.setQuery(String(cmd.dropFirst("quicksearch:query:".count)))
+        case let cmd where cmd.hasPrefix("spotlight:"):
+            // Queries the app's own Core Spotlight donations and dumps matches —
+            // donated items are invisible to mdfind, so this is the only way to
+            // verify them from a terminal.
+            spotlightProbe(term: String(cmd.dropFirst("spotlight:".count)))
+        case let cmd where cmd.hasPrefix("reveal:"):
+            // Exercises the Spotlight click-through path without clicking.
+            if let id = Int64(cmd.dropFirst("reveal:".count)) {
+                model?.reveal(folderId: id)
+            }
         case let cmd where cmd.hasPrefix("snap:"):
             snapshot(tag: sanitize(String(cmd.dropFirst("snap:".count))))
         case let cmd where cmd.hasPrefix("dump:"):
             dumpHierarchy(tag: sanitize(String(cmd.dropFirst("dump:".count))))
         default:
             break
+        }
+    }
+
+    private static func spotlightProbe(term: String) {
+        let safe = sanitize(term)
+        let context = CSSearchQueryContext()
+        context.fetchAttributes = ["title", "contentDescription"]
+        let query = CSSearchQuery(
+            queryString: "title == \"*\(safe)*\"cd",
+            queryContext: context
+        )
+        Task {
+            var out = ""
+            do {
+                for try await result in query.results {
+                    let a = result.item.attributeSet
+                    out += "\(result.item.uniqueIdentifier)  \(a.title ?? "?")  —  \(a.contentDescription ?? "")\n"
+                }
+            } catch {
+                out += "query error: \(error)\n"
+            }
+            if out.isEmpty { out = "(no donated items match \"\(safe)\")\n" }
+            try? out.write(
+                to: debugDirectory().appending(path: "spotlight-\(safe).txt"),
+                atomically: true, encoding: .utf8
+            )
         }
     }
 

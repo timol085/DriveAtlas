@@ -10,12 +10,34 @@ enclosures and a free afternoon.
 
 macOS 14+, Swift 6. A SwiftUI menu bar app and a CLI, both over the same core.
 
+## What it does
+
+- **Auto-catalogs on connect.** Plug in a drive and it's scanned in the
+  background — no action needed. The catalog survives after you unplug it.
+- **Quick Search from anywhere.** A ⌃⌥Space floating panel (or a click on the
+  menu bar icon) finds a folder across every drive without opening a window or
+  switching apps — and tells you which drive it's on.
+- **Findable in system Spotlight.** Your folders are donated to ⌘Space too,
+  *including drives currently unplugged* — which Spotlight itself can never
+  index.
+- **Backup Check.** Compares every drive to find what you have exactly one copy
+  of, and what's duplicated and reclaimable.
+- **Three ways to see a drive** — an indented list, a node-link map, and a
+  size treemap — plus per-folder file-type breakdowns.
+- **Drive health.** Type (SSD/HDD), capacity, free space, and an age warning on
+  old SSDs.
+- **Read-only.** Never modifies, moves, or deletes anything on the drives it
+  scans — [audited, not just asserted](#read-only-by-design).
+
 ---
 
 ## Contents
 
 - [Install](#install)
 - [Using the app](#using-the-app)
+  - [Quick Search](#quick-search) — the ⌃⌥Space panel
+  - [Spotlight](#spotlight) — finding drives from ⌘Space
+  - [The three views](#the-three-views)
 - [Using the CLI](#using-the-cli)
 - [Permissions](#permissions)
 - [Read-only by design](#read-only-by-design)
@@ -63,32 +85,69 @@ in `make-app.sh` and rebuild.
 ## Using the app
 
 DriveAtlas needs to be running to notice a drive being connected. It lives in
-the menu bar; the window is optional and can be closed.
+the menu bar; the window is optional and can be closed. Turn on **Launch at
+Login** (the ••• button in Quick Search) so that's true without you remembering
+to open it — everything ambient (auto-scanning a plugged-in drive, the hotkey,
+fresh Spotlight donations) depends on the process actually being alive.
 
 **Plug in a drive** → it's detected, added to the sidebar, and scanned in the
-background. The menu bar icon shows scan progress. You can browse the cached tree
-of any other drive while a scan runs.
+background. The menu bar icon changes while a scan runs. You can browse the
+cached tree of any other drive while a scan runs.
+
+### Quick Search
+
+The on-demand entry point. Press **⌃⌥Space** anywhere — mid-Finder,
+mid-anything — or click the menu bar icon (either mouse button), and a small
+floating search box appears without switching apps or opening a window. Type,
+see which drive has it, Enter or click to jump straight there; Esc or click
+elsewhere dismisses it.
+
+- **↑ ↓** move through results, **↵** opens the highlighted one. The top hit is
+  selected by default, so type-and-Enter works without touching the mouse.
+- **With the box empty it lists your drives**, so it doubles as a drive switcher.
+- The **•••** button in the footer holds **Launch at Login**, Open DriveAtlas,
+  and Quit. Everything lives on that one surface — there's no second gesture to
+  learn.
+
+⌃⌥Space avoids the two combos already spoken for on most Macs (⌘Space is
+Spotlight, ⌥Space is Alfred's default); there's no in-app picker yet to change
+it. It needs **no permissions at all** — see the Carbon note in
+[Design notes](#design-notes) for why that took a rewrite to achieve.
+
+### Spotlight
+
+Your folders are also donated to macOS's own Spotlight index, so **⌘Space finds
+them too** — *including drives that are unplugged*, which Spotlight on its own
+can never index. A result shows the size and drive ("409 GB on Travel — Japan");
+clicking it opens DriveAtlas at that folder. Donations never expire, refresh
+after every scan, and are removed when a drive is forgotten. Folders under 10 MB
+aren't donated (nobody ⌘Space-searches for those), capped at 3 000 per drive.
+
+### The main window
 
 **The sidebar** lists every drive you've ever connected, with type (SSD/HDD),
-capacity, free space, and a warning triangle on SSDs over five years old. Right-click to forget
-one.
+capacity, free space, and a warning triangle on SSDs over five years old. Click
+one to open it; right-click for Rescan Now or Forget.
+
+**The search field** (top of the window) searches folder names across _every_
+catalogued drive, connected or not, and each hit tells you which drive it's on.
+This is the in-window equivalent of Quick Search.
 
 **Backup Check** (top of the sidebar) compares folders across every drive and
 answers the question a pile of disks makes hard: _what do I have exactly one copy
 of?_ It also lists what's duplicated across drives, with how much space you'd
-reclaim by keeping one copy.
+reclaim by keeping one copy. It matches on folder **name and size** — nothing
+reads file contents, so a match means "probably the same thing, worth checking",
+never a verified backup. Folders below 100 MB are ignored, and if a folder has
+no second copy its children aren't listed separately.
 
-It matches on folder **name and size** — nothing reads file contents. A match
-means "probably the same thing, worth checking", never a verified backup. Folders
-below 100 MB are ignored, and if a folder has no second copy its children aren't
-listed separately.
+**Rescan a connected drive** with the toolbar's Rescan button (or right-click it
+in the sidebar) after changing its contents — deleting duplicates, adding a
+shoot. Unplugging and replugging does the same thing. When a rescan finishes,
+Backup Check, Spotlight donations, and the views all refresh automatically.
 
-**The search field** searches folder names across _every_ catalogued drive,
-connected or not, and each hit tells you which drive it's on. This is the feature
-the app exists for.
-
-**Drive info** (the ⓘ button) is where you correct what macOS couldn't detect
-the SSD/HDD type, and the purchase date. Both matter; see
+**Drive Info** (the ⓘ button) is where you correct what macOS couldn't detect:
+the SSD/HDD type and the purchase date. Both matter; see
 [Design notes](#design-notes).
 
 ### The three views
@@ -217,6 +276,11 @@ see [Not built yet](#not-built-yet).
 | `VolumeWatcher` | Mount/unmount notifications                                         |
 | `DriveCatalog`  | Ties them together — plug in a drive, it gets catalogued            |
 | `AppModel`      | Observable state for the UI                                         |
+| `SpotlightIndexer` | Donates the catalog to system Spotlight, per-drive domains       |
+| `StatusItemController` | Owns the menu bar icon directly via `NSStatusItem` — click routing, the right-click menu |
+| `QuickSearchPanel` | The ⌃⌥Space floating search box (`NSPanel` + SwiftUI content) |
+| `HotkeyManager` | Carbon `RegisterEventHotKey` for ⌃⌥Space — no permissions needed     |
+| `LaunchAtLogin` | `SMAppService` wrapper                                              |
 | `driveatlas`    | CLI over the same core                                              |
 
 **The scan** walks the volume depth-first, inserting each folder on the way down
@@ -335,6 +399,80 @@ the tree, so summing them across folders counts each file once per ancestor — 
 two `.raf` files in the test fixture would report 900 bytes instead of 300.
 `ScannerTests.topExtensionsDoNotDoubleCount` guards this.
 
+**The menu bar icon is a raw `NSStatusItem`, not SwiftUI's `MenuBarExtra`.**
+`MenuBarExtra` shows a menu on click, or runs a closure on click — not one
+depending on *which* mouse button, and left-click-opens-search /
+right-click-shows-menu is the entire feature. `StatusItemController` routes by
+inspecting `NSApp.currentEvent.type` in the button's action, then uses the
+assign-a-menu-then-immediately-clear-it trick to show a real `NSMenu` only for
+the instant a right-click needs one — otherwise every click would open that
+menu, defeating the left-click search shortcut. Verified with a real
+`CGEvent`-synthesized right-click during development, not just the debug
+bridge, since `AXShowMenu` (the natural accessibility-script approach) finds
+nothing — there's no menu assigned to the status item except in that instant.
+
+**Spotlight donations and the quick-search panel share one `search`, not two.**
+`AppModel.search(_:)` is pure — it reads the store and returns hits without
+touching `searchQuery`/`searchResults`, the main window's own search state —
+specifically so the floating panel can search without ever clobbering (or being
+clobbered by) whatever the main window has on screen. `rerunSearch()` (the main
+window's path) just calls it and assigns the result.
+
+**The global hotkey uses Carbon's `RegisterEventHotKey`, not an `NSEvent`
+global monitor.** The `NSEvent` version silently never fired from other apps —
+verified with Input Monitoring granted (`CGPreflightListenEventAccess() ==
+true`) and the callback still dead. That API is gated on **Accessibility**
+trust, not Input Monitoring, because a global monitor can observe *every*
+keystroke system-wide. `RegisterEventHotKey` registers one combination with the
+window server and fires only for that one, so it needs no permission at all —
+which also means nothing for a rebuild's changed ad-hoc signature to
+invalidate. Don't pair it with a local `NSEvent` monitor "for the frontmost
+case": a registered hot key already fires whichever app is frontmost, so both
+handlers ran, `toggle()` fired twice, and the panel opened and instantly closed
+whenever DriveAtlas was active.
+
+**The app defines its own colours instead of using the system accent.** It used
+to read `Color.accentColor`, which meant DriveAtlas's identity colour was
+whatever the user had set in System Settings — and that broke *meaning*, not
+just consistency. With an orange system accent, "selected" and "this drive is
+nearly full" rendered as the same colour; with a blue one they separated. Which
+ideas collided changed per machine, which nothing can be designed around. So
+`AppColor` pins two roles and they're verified distinct with the palette
+validator: ΔE 24.7 (protan) / 33.6 (normal vision) apart in light mode, 26.8 /
+31.8 in dark. `AppColor.warning` means caution and nothing else — nearly-full
+drives, ageing SSDs, folders with no second copy. Don't use it decoratively.
+
+**Selection is a tint plus a leading bar, never a filled row.** `SelectionBackground`
+is shared by the sidebar and the quick-search panel so they can't drift. The
+system's filled highlight measured 2.62:1 against the white label text it forces
+— below WCAG AA's 4.5:1 and below even the 3:1 large-text floor. Tinting leaves
+the row's own text colours alone, so contrast is whatever the surrounding view
+already guarantees. Note the sidebar drops `List(selection:)` entirely to
+achieve this: `listRowBackground` draws *behind* the system capsule, so with a
+selection binding a custom treatment just adds a bar underneath the system fill
+rather than replacing it. The cost is the sidebar's built-in arrow-key
+navigation; ⌃⌥Space is the keyboard path through drives and implements ↑↓
+itself.
+
+**Two traps in the quick-search panel's row lists.** First, don't put a bare
+`.id(index)` on rows inside the mode-switching `ForEach`: an explicit `.id()`
+overrides SwiftUI's view identity, so switching between the drive list and the
+results list reused row 0's *drive* view for result 0 — the panel rendered four
+drives and one folder beneath a "5 results" footer. The ids are namespaced
+(`"r0"`, `"d0"`) for that reason. Second, hover selection is gated on real
+pointer *movement* via `onContinuousHover`: a plain `.onHover` fires when a row
+appears under an already-stationary cursor, so opening the panel near the mouse
+silently moved the selection and ⌃⌥Space → type → Enter opened whatever was
+under the pointer instead of the top hit.
+
+**`SMAppService.mainApp` reports on whatever process asks it**, which is a trap
+worth knowing about if you go probing this yourself: running a one-off
+`swift script.swift` to check "is DriveAtlas registered" queries the *script's*
+non-existent registration, not the app's — it always answers `.notFound`. The
+only place `LaunchAtLogin.isEnabled` means anything is inside the running
+DriveAtlas process; `DebugBridge`'s `loginstatus` command exists because of
+exactly this.
+
 ---
 
 ## Development
@@ -377,10 +515,24 @@ driven and inspected from a terminal that has no Screen Recording permission —
 an app photographing _its own_ windows needs none:
 
 ```sh
-driveatlas debug select-backup   # drive the sidebar selection
+driveatlas debug select-backup          # drive the sidebar selection
 driveatlas debug select-drive
-driveatlas debug snap:tag        # PNGs of every window (materials render white — artifact)
-driveatlas debug dump:tag        # view hierarchy with frames — the reliable signal
+driveatlas debug mode:graph             # list | graph | treemap
+driveatlas debug orient                 # flip the node map's growth direction
+driveatlas debug snap:tag               # PNGs of every window (materials render white — artifact)
+driveatlas debug dump:tag               # view hierarchy with frames — the reliable signal
+driveatlas debug quicksearch:toggle     # open/close the ⌃⌥Space panel
+driveatlas debug quicksearch:show       # deterministic show/hide, for scripted tests
+driveatlas debug quicksearch:hide       #   (toggle-from-unknown-state gives flaky results)
+driveatlas debug quicksearch:state      # is the panel visible right now?
+driveatlas debug quicksearch:selection  # index of the highlighted row
+driveatlas debug quicksearch:move:1     # move selection as ↑↓ would (synthesized
+                                        #   arrow keys steal key focus and dismiss it)
+driveatlas debug quicksearch:query:term # type into it without simulating keystrokes
+driveatlas debug reveal:<folderId>      # exercise the Spotlight/quick-search click-through path
+driveatlas debug spotlight:term         # query this app's own Core Spotlight donations —
+                                         # they're invisible to mdfind, so this is the only way in
+driveatlas debug loginstatus            # SMAppService status, read from inside the real app
 ```
 
 Output lands in `~/Library/Application Support/DriveAtlas/debug/`. The frame
@@ -407,14 +559,15 @@ macOS uses so it sits the same size as other Dock icons.
 
 - **Incremental rescanning.** Every scan is currently a full rewrite. See the
   mtime note above for what this can and can't buy.
-- **Launch at login** via `SMAppService`.
+- **A hotkey picker.** ⌃⌥Space is hardcoded in `HotkeyManager`; changing it
+  today means editing the constant and rebuilding.
+- **`driveatlas://` URL scheme + a Finder "Find copies in DriveAtlas" Quick
+  Action**, for Raycast/Alfred/Shortcuts and right-click-in-Finder entry points.
 - **Real SSD wear data.** Would need `smartmontools` and probably admin rights,
   and works on only some enclosures.
 - **OS-enforced read-only.** App Sandbox with the read-only removable-media
   entitlement would make macOS itself reject any write to external volumes,
   upgrading "audited to only read" into "the OS won't allow it". Costs: the
   catalog moves into a sandbox container, and the permission flow changes.
-- **Rescan button** for a connected drive whose contents changed — today the
-  catalog refreshes on reconnect (or via `driveatlas scan`).
 - **Reveal in Finder** from search results and the tree views, when the drive
   is mounted.

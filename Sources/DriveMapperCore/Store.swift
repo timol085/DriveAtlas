@@ -338,6 +338,29 @@ public final class Store: Sendable {
         }
     }
 
+    /// Folders worth donating to the system Spotlight index: biggest first,
+    /// with a floor and a cap.
+    ///
+    /// The floor exists because nobody Spotlight-searches for a 40 KB folder,
+    /// and the cap keeps a pathological drive from flooding the system index —
+    /// Core Spotlight handles thousands of items happily, not hundreds of
+    /// thousands.
+    public func foldersForIndex(
+        driveId: Int64,
+        minBytes: Int64 = 10_000_000,
+        limit: Int = 3000
+    ) throws -> [Folder] {
+        try dbWriter.read { db in
+            try Folder
+                .filter(Folder.Columns.driveId == driveId)
+                .filter(Column("totalBytes") >= minBytes)
+                .filter(Folder.Columns.path != "")
+                .order(Column("totalBytes").desc)
+                .limit(limit)
+                .fetchAll(db)
+        }
+    }
+
     /// Full-text search over folder names across every catalogued drive,
     /// including drives that aren't currently plugged in.
     public func searchFolders(_ query: String, limit: Int = 200) throws -> [Folder] {

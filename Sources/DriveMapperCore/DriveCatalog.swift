@@ -53,6 +53,21 @@ public final class DriveCatalog {
         watcher = nil
     }
 
+    /// Rescans a catalogued drive on demand, if its volume is currently mounted.
+    ///
+    /// Returns `false` when the drive isn't connected — a rescan needs the real
+    /// filesystem, and the caller should say so rather than silently do nothing.
+    /// Reuses the mount path end to end, so an on-demand rescan behaves exactly
+    /// like a replug: sighting refreshed (free space included), then scanned.
+    @discardableResult
+    public func rescan(volumeUUID: String) -> Bool {
+        guard let volume = MountedVolume.currentlyMounted()
+            .first(where: { $0.stableIdentifier == volumeUUID })
+        else { return false }
+        handleMount(volume, rescanKnown: true)
+        return true
+    }
+
     private func handleMount(_ volume: MountedVolume, rescanKnown: Bool) {
         let id = volume.stableIdentifier
         let name = volume.metadata.volumeName

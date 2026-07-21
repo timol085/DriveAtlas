@@ -112,7 +112,7 @@ struct TreemapView: View {
                 Label(drive.name, systemImage: "externaldrive")
             }
             .buttonStyle(.plain)
-            .foregroundStyle(path.count <= 1 ? Color.primary : Color.accentColor)
+            .foregroundStyle(path.count <= 1 ? Color.primary : AppColor.accent)
 
             ForEach(Array(path.dropFirst().enumerated()), id: \.element.id) { index, folder in
                 Image(systemName: "chevron.right")
@@ -124,7 +124,7 @@ struct TreemapView: View {
                     Text(folder.name)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(index == path.count - 2 ? Color.primary : Color.accentColor)
+                .foregroundStyle(index == path.count - 2 ? Color.primary : AppColor.accent)
             }
 
             Spacer()

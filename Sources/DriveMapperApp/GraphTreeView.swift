@@ -109,6 +109,11 @@ struct GraphTreeView: View {
             ZStack(alignment: .topLeading) {
                 Color(nsColor: .textBackgroundColor)
 
+                // Blender-style reference grid. Anchored in content space, so it
+                // pans and zooms with the tree — a static grid reads as wallpaper,
+                // a moving one tells you where you are.
+                gridBackground(viewport: geo.size)
+
                 ZStack(alignment: .topLeading) {
                     // Edges first so nodes paint over the line ends.
                     Canvas { context, _ in
@@ -329,6 +334,53 @@ struct GraphTreeView: View {
         .padding(10)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .padding(10)
+    }
+
+    // MARK: - Grid
+
+    /// The reference grid behind the tree: a fine, single-weight mesh.
+    ///
+    /// Lines live in content coordinates — the same space the boxes are laid out
+    /// in — so panning slides the grid and zooming visibly tightens or spreads
+    /// it. The step only re-levels (doubles/halves) when on-screen spacing
+    /// leaves a wide ≈9–54px band, so across most of the zoom range the mesh
+    /// scales continuously with the content instead of snapping.
+    ///
+    /// Positions are computed by hand instead of putting the Canvas inside the
+    /// scaled/offset layer — a transformed canvas would scale the stroke widths
+    /// too, turning the grid to fog when zoomed out and planks when zoomed in.
+    private func gridBackground(viewport: CGSize) -> some View {
+        Canvas { context, size in
+            var step = 48 * scale
+            while step < 24 { step *= 2 }
+            while step > 120 { step /= 2 }
+
+            // One path, one stroke — every line identical.
+            var path = Path()
+
+            var x = offset.width.truncatingRemainder(dividingBy: step)
+            if x < 0 { x += step }
+            while x <= size.width {
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+                x += step
+            }
+
+            var y = offset.height.truncatingRemainder(dividingBy: step)
+            if y < 0 { y += step }
+            while y <= size.height {
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+                y += step
+            }
+
+            context.stroke(
+                path,
+                with: .color(.primary.opacity(0.06)),
+                lineWidth: 1
+            )
+        }
+        .allowsHitTesting(false)
     }
 
     // MARK: - Zoom
@@ -850,7 +902,7 @@ struct OverflowBreakdownView: View {
                 HStack(spacing: 8) {
                     Image(systemName: node.folder.isLeafBundle ? "shippingbox" : "folder")
                         .font(.caption2)
-                        .foregroundStyle(node.folder.isLeafBundle ? .orange : Color.accentColor)
+                        .foregroundStyle(node.folder.isLeafBundle ? Color.secondary : AppColor.accent)
                     Text(node.folder.name)
                         .font(.caption)
                         .lineLimit(1)
