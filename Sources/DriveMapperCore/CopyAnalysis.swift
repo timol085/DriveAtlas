@@ -28,6 +28,16 @@ public struct CopyAnalysis: Sendable {
     public struct Group: Sendable, Identifiable {
         public let name: String
         public let locations: [Location]
+        /// Weakest pairwise file-overlap in the group (0–1). `nil` for at-risk
+        /// groups (a single folder has nothing to overlap with). 1.0 for a set
+        /// of byte-identical folders.
+        public let overlap: Double?
+
+        public init(name: String, locations: [Location], overlap: Double? = nil) {
+            self.name = name
+            self.locations = locations
+            self.overlap = overlap
+        }
 
         public var id: String { "\(name.lowercased())-\(locations.first?.folderId ?? 0)" }
 
@@ -60,136 +70,182 @@ public struct CopyAnalysis: Sendable {
     /// Folders found on two or more drives, most reclaimable space first.
     public let duplicated: [Group]
 
-    public init(atRisk: [Group], duplicated: [Group]) {
+    /// Drive names catalogued before file fingerprints existed (schema v5).
+    /// They can't participate in content matching until rescanned — and an
+    /// empty result for them is *missing data*, not a clean bill of health, so
+    /// the UI must prompt a rescan rather than imply everything is backed up.
+    public let drivesNeedingRescan: [String]
+
+    public init(atRisk: [Group], duplicated: [Group], drivesNeedingRescan: [String] = []) {
         self.atRisk = atRisk
         self.duplicated = duplicated
+        self.drivesNeedingRescan = drivesNeedingRescan
     }
 
     public var atRiskBytes: Int64 { atRisk.reduce(0) { $0 + $1.representativeBytes } }
     public var reclaimableBytes: Int64 { duplicated.reduce(0) { $0 + $1.reclaimableBytes } }
+
+    /// How a Backup Check list is ordered.
+    ///
+    /// Logic lives here, in Core, so it's unit-testable — the view supplies only
+    /// the labels and icons. Ties always break on name, so a given field +
+    /// direction produces one stable order rather than a shuffling one.
+    public enum SortField: String, CaseIterable, Sendable {
+        case size, name, drive, reclaimable, copies
+
+        /// Fields that make sense per list. A single-copy group has nothing to
+        /// reclaim and always spans one drive, so those are hidden on the
+        /// at-risk list; a duplicated group spans several, so "drive" is hidden
+        /// there.
+        public static func fields(duplicated: Bool) -> [SortField] {
+            duplicated ? [.reclaimable, .size, .copies, .name] : [.size, .name, .drive]
+        }
+
+        /// Descending is the natural default for the quantitative fields
+        /// (biggest / most first); name and drive read naturally ascending.
+        public var defaultsDescending: Bool {
+            switch self {
+            case .size, .reclaimable, .copies: true
+            case .name, .drive: false
+            }
+        }
+
+        public func compare(_ a: Group, _ b: Group, ascending: Bool) -> Bool {
+            func dir(_ result: Bool) -> Bool { ascending ? result : !result }
+            func byName() -> Bool { a.name.localizedStandardCompare(b.name) == .orderedAscending }
+
+            switch self {
+            case .name:
+                return dir(byName())
+            case .drive:
+                let da = a.locations.first?.driveName ?? ""
+                let db = b.locations.first?.driveName ?? ""
+                if da == db { return byName() }
+                return dir(da.localizedStandardCompare(db) == .orderedAscending)
+            case .size:
+                if a.representativeBytes == b.representativeBytes { return byName() }
+                return dir(a.representativeBytes < b.representativeBytes)
+            case .reclaimable:
+                if a.reclaimableBytes == b.reclaimableBytes { return byName() }
+                return dir(a.reclaimableBytes < b.reclaimableBytes)
+            case .copies:
+                if a.driveCount == b.driveCount { return byName() }
+                return dir(a.driveCount < b.driveCount)
+            }
+        }
+    }
+}
+
+public extension Array where Element == CopyAnalysis.Group {
+    /// Sorted copy, with the field's tie-break already built in.
+    func sorted(by field: CopyAnalysis.SortField, ascending: Bool) -> [CopyAnalysis.Group] {
+        sorted { field.compare($0, $1, ascending: ascending) }
+    }
 }
 
 extension Store {
 
-    /// Compares folders across every catalogued drive.
+    /// Compares folders across every catalogued drive by their **file content**,
+    /// not their names — so a folder backed up under a different name is still
+    /// found, and two identically-named folders holding different files are not
+    /// mistaken for copies.
     ///
-    /// - Parameters:
-    ///   - minBytes: Folders smaller than this are ignored. Without a floor the
-    ///     result is thousands of tiny folders and no signal at all.
-    ///   - tolerance: How much two folders' sizes may differ and still count as
-    ///     copies. Copies are rarely byte-identical — a stray `.DS_Store`, a
-    ///     different filesystem, a partially-completed transfer.
-    public func analyseCopies(
-        minBytes: Int64 = 100_000_000,
-        tolerance: Double = 0.05
-    ) throws -> CopyAnalysis {
+    /// See `FolderMatcher` for the algorithm and `FilePrint` for what "content"
+    /// means here (name + size fingerprints, never file bytes). The read-only
+    /// guarantee holds: nothing below opens a file.
+    ///
+    /// - Parameter minBytes: folders smaller than this are ignored — without a
+    ///   floor the result is thousands of tiny folders and no signal.
+    public func analyseCopies(minBytes: Int64 = 100_000_000) throws -> CopyAnalysis {
+        struct Row2 {
+            let id: Int64
+            let driveId: Int64
+            let driveName: String
+            let contentScanned: Bool
+            let parentId: Int64?
+            let depth: Int
+            let name: String
+            let path: String
+            let totalBytes: Int64
+            let totalFileCount: Int
+            let prints: Set<UInt64>
+        }
 
-        let locations: [CopyAnalysis.Location] = try dbWriter.read { db in
+        // Every folder (roots included, for correct rollup) with its own prints.
+        let rows: [Row2] = try dbWriter.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT folder.id      AS folderId,
-                       folder.driveId AS driveId,
-                       folder.name    AS name,
-                       folder.path    AS path,
-                       folder.totalBytes,
-                       folder.totalFileCount,
-                       drive.name     AS driveName
+                SELECT folder.id, folder.driveId, folder.parentId, folder.depth,
+                       folder.name, folder.path, folder.totalBytes,
+                       folder.totalFileCount, folder.filePrints,
+                       drive.name AS driveName, drive.contentScanned
                 FROM folder
                 JOIN drive ON drive.id = folder.driveId
-                WHERE folder.totalBytes >= ?
-                  AND folder.path <> ''
-                ORDER BY folder.totalBytes DESC
-                """, arguments: [minBytes])
+                """)
                 .map {
-                    CopyAnalysis.Location(
-                        driveId: $0["driveId"],
-                        driveName: $0["driveName"],
-                        folderId: $0["folderId"],
-                        path: $0["path"],
-                        totalBytes: $0["totalBytes"],
-                        totalFileCount: $0["totalFileCount"]
+                    Row2(
+                        id: $0["id"], driveId: $0["driveId"], driveName: $0["driveName"],
+                        contentScanned: $0["contentScanned"],
+                        parentId: $0["parentId"], depth: $0["depth"],
+                        name: $0["name"], path: $0["path"],
+                        totalBytes: $0["totalBytes"], totalFileCount: $0["totalFileCount"],
+                        prints: ($0["filePrints"] as Data?).map(FilePrint.unpack) ?? []
                     )
                 }
         }
-        // `path <> ''` above excludes drive roots — every drive has exactly one,
-        // and reporting "your drive exists on only one drive" helps nobody.
 
-        // Group by name, then split each name group into size clusters. Name alone
-        // would merge every "Photos" on every drive regardless of contents;
-        // size alone would merge unrelated folders that happen to weigh the same.
-        var byName: [String: [CopyAnalysis.Location]] = [:]
-        for location in locations {
-            let key = URL(fileURLWithPath: location.path).lastPathComponent.lowercased()
-            byName[key, default: []].append(location)
+        let byId = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+        let result = FolderMatcher.match(
+            nodes: rows.map {
+                FolderMatcher.Node(
+                    id: $0.id, driveId: $0.driveId, parentId: $0.parentId,
+                    depth: $0.depth, totalBytes: $0.totalBytes, ownPrints: $0.prints
+                )
+            },
+            minBytes: minBytes
+        )
+
+        func location(_ id: Int64) -> CopyAnalysis.Location? {
+            guard let r = byId[id] else { return nil }
+            return CopyAnalysis.Location(
+                driveId: r.driveId, driveName: r.driveName, folderId: r.id,
+                path: r.path, totalBytes: r.totalBytes, totalFileCount: r.totalFileCount
+            )
         }
 
-        var groups: [CopyAnalysis.Group] = []
-        for (_, sameName) in byName {
-            for cluster in clusterBySize(sameName, tolerance: tolerance) {
-                guard let first = cluster.first else { continue }
-                let displayName = URL(fileURLWithPath: first.path).lastPathComponent
-                groups.append(CopyAnalysis.Group(name: displayName, locations: cluster))
-            }
+        // A duplicated group's headline name is its largest member's — folders
+        // in a content match may be named differently, and each Location shows
+        // its own path/drive, so the difference is still visible per row.
+        let duplicated: [CopyAnalysis.Group] = result.duplicated.compactMap { cluster in
+            let locs = cluster.folderIds.compactMap(location).sorted { $0.totalBytes > $1.totalBytes }
+            guard locs.count >= 2 else { return nil }
+            let headline = byId[locs[0].folderId]?.name ?? locs[0].path
+            return CopyAnalysis.Group(name: headline, locations: locs, overlap: cluster.overlap)
         }
+        .sorted { $0.reclaimableBytes > $1.reclaimableBytes }
 
-        let single = groups.filter { $0.driveCount == 1 }
-        let multiple = groups.filter { $0.driveCount > 1 }
+        let atRisk: [CopyAnalysis.Group] = result.atRisk.compactMap { id -> CopyAnalysis.Group? in
+            guard let loc = location(id), let name = byId[id]?.name else { return nil }
+            return CopyAnalysis.Group(name: name, locations: [loc])
+        }
+        .sorted { $0.representativeBytes > $1.representativeBytes }
+
+        // A drive needs rescanning if it was scanned before fingerprinting
+        // existed (`contentScanned == false`) yet holds real content. Uses the
+        // drive-level flag, not per-folder print presence: leaf bundles and
+        // folders whose files are all nested legitimately have no own-prints, so
+        // a "folder with files but no prints" check flagged fully-scanned drives
+        // forever.
+        var needRescan = Set<String>()
+        for row in rows where !row.contentScanned
+            && row.parentId != nil
+            && row.totalBytes >= minBytes
+            && row.totalFileCount > 0 {
+            needRescan.insert(row.driveName)
+        }
 
         return CopyAnalysis(
-            atRisk: suppressDescendants(of: single)
-                .sorted { $0.representativeBytes > $1.representativeBytes },
-            duplicated: multiple
-                .sorted { $0.reclaimableBytes > $1.reclaimableBytes }
+            atRisk: atRisk, duplicated: duplicated,
+            drivesNeedingRescan: needRescan.sorted()
         )
-    }
-
-    /// Splits folders sharing a name into clusters of similar size.
-    ///
-    /// Greedy over a descending sort: each folder joins the open cluster if it's
-    /// within tolerance of that cluster's largest member, otherwise it starts a
-    /// new one.
-    private func clusterBySize(
-        _ locations: [CopyAnalysis.Location],
-        tolerance: Double
-    ) -> [[CopyAnalysis.Location]] {
-        let sorted = locations.sorted { $0.totalBytes > $1.totalBytes }
-        var clusters: [[CopyAnalysis.Location]] = []
-
-        for location in sorted {
-            if let index = clusters.indices.last,
-               let anchor = clusters[index].first?.totalBytes,
-               anchor > 0,
-               Double(anchor - location.totalBytes) / Double(anchor) <= tolerance {
-                clusters[index].append(location)
-            } else {
-                clusters.append([location])
-            }
-        }
-        return clusters
-    }
-
-    /// Drops at-risk folders whose ancestor is already listed.
-    ///
-    /// If `Photos` has no second copy then neither does `Photos/2019`, and listing
-    /// both buries the useful row under its own children. Only the shallowest
-    /// un-backed-up folder in any chain is reported.
-    private func suppressDescendants(of groups: [CopyAnalysis.Group]) -> [CopyAnalysis.Group] {
-        // Shallowest first, so an ancestor is always considered before its children.
-        let ordered = groups.sorted {
-            ($0.locations.first?.path.count ?? 0) < ($1.locations.first?.path.count ?? 0)
-        }
-
-        var keptPathsByDrive: [Int64: [String]] = [:]
-        var kept: [CopyAnalysis.Group] = []
-
-        for group in ordered {
-            guard let location = group.locations.first else { continue }
-            let ancestors = keptPathsByDrive[location.driveId] ?? []
-            let covered = ancestors.contains { location.path.hasPrefix($0 + "/") }
-            guard !covered else { continue }
-
-            kept.append(group)
-            keptPathsByDrive[location.driveId, default: []].append(location.path)
-        }
-        return kept
     }
 }

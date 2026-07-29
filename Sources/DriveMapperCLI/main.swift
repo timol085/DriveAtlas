@@ -134,8 +134,15 @@ case "watch":
 case "backup":
     let analysis = try store.analyseCopies()
 
-    print("Matching is by folder name and size — nothing reads file contents.")
-    print("Treat a match as 'worth checking', not a verified backup.\n")
+    print("Folders matched by the names + sizes of the files inside them — never")
+    print("file contents. A camera reusing a filename can look identical, so treat")
+    print("a match as 'worth checking', not a verified backup.\n")
+
+    if !analysis.drivesNeedingRescan.isEmpty {
+        print("⚠️  Rescan needed — these drives predate content checking and aren't")
+        print("    being compared: \(analysis.drivesNeedingRescan.joined(separator: ", "))")
+        print("    An empty result below does NOT mean everything is backed up.\n")
+    }
 
     if analysis.atRisk.isEmpty {
         print("Nothing large sits on only one drive.")
@@ -156,7 +163,8 @@ case "backup":
     } else {
         print("ON SEVERAL DRIVES  (\(humanBytes(analysis.reclaimableBytes)) reclaimable)")
         for group in analysis.duplicated.prefix(20) {
-            print("  \(humanBytes(group.representativeBytes).padding(toLength: 10, withPad: " ", startingAt: 0))  \(group.name)  ×\(group.driveCount)  [\(group.driveNames.joined(separator: ", "))]")
+            let match = group.overlap.map { $0 >= 0.999 ? "identical" : "\(Int(($0 * 100).rounded()))% same" } ?? ""
+            print("  \(humanBytes(group.representativeBytes).padding(toLength: 10, withPad: " ", startingAt: 0))  \(group.name)  ×\(group.driveCount)  \(match)  [\(group.driveNames.joined(separator: ", "))]")
         }
     }
 

@@ -5,6 +5,11 @@ import DriveMapperCore
 struct BackupCheckView: View {
     @Bindable var model: AppModel
     @State private var tab: Tab = .atRisk
+    // Persisted so the choice sticks, like the folder-tree sort. The sort
+    // *logic* lives in `CopyAnalysis.SortField` (Core, unit-tested); only the
+    // label and icon are presentation, below.
+    @AppStorage("backupSort") private var sortField: CopyAnalysis.SortField = .size
+    @AppStorage("backupSortAscending") private var ascending = false
 
     enum Tab: String, CaseIterable {
         case atRisk, duplicated
@@ -15,6 +20,37 @@ struct BackupCheckView: View {
             case .duplicated: "On several drives"
             }
         }
+    }
+
+    private func sortLabel(_ field: CopyAnalysis.SortField) -> String {
+        switch field {
+        case .size: "Size"
+        case .name: "Name"
+        case .drive: "Drive"
+        case .reclaimable: "Reclaimable space"
+        case .copies: "Number of copies"
+        }
+    }
+
+    private func sortSymbol(_ field: CopyAnalysis.SortField) -> String {
+        switch field {
+        case .size: "internaldrive"
+        case .name: "textformat"
+        case .drive: "externaldrive"
+        case .reclaimable: "arrow.down.circle"
+        case .copies: "doc.on.doc"
+        }
+    }
+
+    private var sortOptions: [CopyAnalysis.SortField] {
+        CopyAnalysis.SortField.fields(duplicated: tab == .duplicated)
+    }
+
+    /// The sort actually in effect — falls back to the tab's first option when
+    /// the persisted field doesn't apply to the current tab (e.g. "Reclaimable"
+    /// carried over to the single-copy tab).
+    private var activeSort: CopyAnalysis.SortField {
+        sortOptions.contains(sortField) ? sortField : (sortOptions.first ?? .size)
     }
 
     var body: some View {
@@ -42,6 +78,14 @@ struct BackupCheckView: View {
             // is why the drive views never misbehaved. Don't reintroduce either
             // pattern here.
             List {
+                if !analysis.drivesNeedingRescan.isEmpty {
+                    Section {
+                        rescanBanner(analysis.drivesNeedingRescan)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                    }
+                }
+
                 Section {
                     summary(analysis)
                         .listRowInsets(EdgeInsets())
@@ -53,12 +97,16 @@ struct BackupCheckView: View {
                 // the first group row), while a section boundary contributes the
                 // list's natural 20pt gap.
                 Section {
-                    Picker("", selection: $tab) {
-                        ForEach(Tab.allCases, id: \.self) { Text($0.label).tag($0) }
+                    HStack(spacing: 8) {
+                        Picker("", selection: $tab) {
+                            ForEach(Tab.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .tint(AppColor.accent)
+
+                        sortMenu
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .tint(AppColor.accent)
                     .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
                     // No separator under a control — the line rendered flush
                     // against the buttons and read as part of them. Separators
@@ -96,7 +144,64 @@ struct BackupCheckView: View {
     }
 
     private func groups(in analysis: CopyAnalysis) -> [CopyAnalysis.Group] {
-        tab == .atRisk ? analysis.atRisk : analysis.duplicated
+        let base = tab == .atRisk ? analysis.atRisk : analysis.duplicated
+        // Sorting is applied here, at display time, so switching field or
+        // direction is instant — it never re-runs the cross-drive comparison.
+        return base.sorted(by: activeSort, ascending: ascending)
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort by", selection: sortFieldBinding) {
+                ForEach(sortOptions, id: \.self) { option in
+                    Label(sortLabel(option), systemImage: sortSymbol(option)).tag(option)
+                }
+            }
+            .pickerStyle(.inline)
+
+            Divider()
+
+            Picker("Order", selection: $ascending) {
+                Label(ascendingLabel, systemImage: "arrow.up").tag(true)
+                Label(descendingLabel, systemImage: "arrow.down").tag(false)
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+                .labelStyle(.iconOnly)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Sorted by \(sortLabel(activeSort).lowercased()), \(ascending ? "ascending" : "descending")")
+    }
+
+    /// Writes through `activeSort` so picking a field also normalises the
+    /// direction to that field's natural default (biggest-first for size,
+    /// A→Z for name) — the same courtesy the Finder does.
+    private var sortFieldBinding: Binding<CopyAnalysis.SortField> {
+        Binding(
+            get: { activeSort },
+            set: { newField in
+                ascending = !newField.defaultsDescending
+                sortField = newField
+            }
+        )
+    }
+
+    private var ascendingLabel: String {
+        switch activeSort {
+        case .name, .drive: "A to Z"
+        case .size, .reclaimable: "Smallest first"
+        case .copies: "Fewest first"
+        }
+    }
+
+    private var descendingLabel: String {
+        switch activeSort {
+        case .name, .drive: "Z to A"
+        case .size, .reclaimable: "Largest first"
+        case .copies: "Most first"
+        }
     }
 
     @ViewBuilder
@@ -133,9 +238,10 @@ struct BackupCheckView: View {
             }
 
             // The honest caveat, stated where it's read rather than buried in a
-            // tooltip. Nothing here inspects file contents.
+            // tooltip. Content matching compares file names + sizes, never file
+            // bytes — and the camera case the caveat calls out is real.
             Label(
-                "Matched on folder name and size — nothing reads file contents. Treat a match as worth checking, not a verified backup.",
+                "Folders are matched by the names and sizes of the files inside them — never file contents. That means a camera reusing a filename like 001.arw for a different photo can look identical here, so treat a match as worth checking, not a verified backup.",
                 systemImage: "info.circle"
             )
             .font(.caption)
@@ -143,6 +249,27 @@ struct BackupCheckView: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
+    }
+
+    /// Shown when drives were scanned before file fingerprints existed, so their
+    /// content can't be compared yet. Framed as "results are incomplete", never
+    /// as an all-clear.
+    private func rescanBanner(_ drives: [String]) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(AppColor.warning)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Rescan needed for accurate results")
+                    .font(.callout.weight(.medium))
+                Text("These drives were catalogued before content checking existed, so they're not being compared yet: \(drives.joined(separator: ", ")). Connect and rescan each one. Until then, an empty result here does not mean everything is backed up.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppColor.warning.opacity(0.10))
     }
 
     private func stat(value: String, label: String, detail: String, tint: Color) -> some View {
@@ -180,11 +307,20 @@ struct GroupRow: View {
                     Text("\(group.driveCount) drives")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("·")
-                        .foregroundStyle(.tertiary)
+                    Text("·").foregroundStyle(.tertiary)
                     Text("\(formatBytes(group.reclaimableBytes)) reclaimable")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if let overlap = group.overlap {
+                        Text("·").foregroundStyle(.tertiary)
+                        // "identical" when the file sets match exactly, otherwise
+                        // the honest weakest-link overlap so a partial backup
+                        // (some newer files missing) reads as such.
+                        Text(overlap >= 0.999 ? "identical files"
+                                              : "\(Int((overlap * 100).rounded()))% same files")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 

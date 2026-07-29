@@ -135,11 +135,22 @@ This is the in-window equivalent of Quick Search.
 
 **Backup Check** (top of the sidebar) compares folders across every drive and
 answers the question a pile of disks makes hard: _what do I have exactly one copy
-of?_ It also lists what's duplicated across drives, with how much space you'd
-reclaim by keeping one copy. It matches on folder **name and size** — nothing
-reads file contents, so a match means "probably the same thing, worth checking",
-never a verified backup. Folders below 100 MB are ignored, and if a folder has
-no second copy its children aren't listed separately.
+of?_ It also lists what's duplicated, with how much space you'd reclaim by
+keeping one copy and how closely the copies match.
+
+It matches folders by the **file names and sizes inside them** — never file
+contents — so a folder backed up under a *different name* ("Japan" on one drive,
+"JP trip" on another) is still found, and two identically-named folders holding
+different files are not mistaken for copies. Because it's name+size and not a
+content hash, a camera reusing a filename like `001.arw` for a different photo
+can look identical: treat a match as "worth checking", never a verified backup.
+The overlap is whole-folder, so one such collision among hundreds of files
+doesn't create a false match. Folders below 100 MB are ignored, and if a folder
+has no second copy its children aren't listed separately.
+
+Drives catalogued before this feature existed carry no file fingerprints, so
+they can't be compared until rescanned — Backup Check shows a rescan banner for
+them rather than an empty (and misleading) all-clear.
 
 **Rescan a connected drive** with the toolbar's Rescan button (or right-click it
 in the sidebar) after changing its contents — deleting duplicates, adding a
@@ -380,10 +391,26 @@ Folders catalogued before that carry `NULL` and show as "unknown" until their
 drive is rescanned. Sorting pushes unknowns to the end in _both_ directions, a
 date we don't have is unknown, not oldest.
 
-**Backup Check matches on name and size, never content.** Hashing files would
-mean reading every byte on every drive, hours per drive, and it'd need both
-drives present at once to compare. Name plus size within 5% catches real copies
-(they're rarely byte-identical, a stray `.DS_Store` is enough) while rejecting
+**Backup Check matches folders by their file fingerprints, never file bytes.**
+Each file is fingerprinted as a stable 64-bit hash of its `(lowercased name,
+size)` — see `FilePrint`, which uses FNV-1a rather than Swift's randomized
+`Hasher` precisely because these are persisted and compared across scans.
+`FolderMatcher` compares two folders by the Jaccard overlap of their rollup
+fingerprint sets (≥ 0.80 = a copy), with a size window to keep it from being
+O(n²). This is whole-folder overlap on purpose: it finds copies under different
+folder names, and it's immune to the `001.arw` camera-collision because one
+shared fingerprint among hundreds is noise. Storage is a packed `UInt64` blob
+per folder — about 8 bytes per file, a few hundred KB for a typical library, not
+the megabytes storing filenames would cost. The algorithm is pure and lives in
+Core, covered by `FolderMatcherTests`; the store wiring and the "drive predates
+fingerprints → rescan, don't imply all-clear" guard are in `CopyAnalysisTests`.
+
+Hashing file *contents* would be the only way to prove identity, but it would
+mean reading every byte on every drive — hours per drive, breaking the read-only
+guarantee, and needing both drives present at once. Fingerprints trade that for
+"worth checking, not verified", which the UI states plainly. The pre-2026 design
+matched on folder *name* plus size within 5% — it caught same-named copies
+(rarely byte-identical, a stray `.DS_Store` is enough) while rejecting
 the "everyone has a Photos folder" false positive, since two folders called
 Photos that differ wildly in size aren't copies. The UI says so where you read
 the result rather than burying it in a tooltip. Two copies on the _same_ drive

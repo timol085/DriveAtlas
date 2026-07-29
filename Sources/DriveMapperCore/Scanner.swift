@@ -147,8 +147,12 @@ public actor Scanner {
         }
 
         try store.dbWriter.write { db in
+            // `contentScanned` marks that this scan wrote file fingerprints, so
+            // Backup Check knows the drive can be content-matched — see the v6
+            // migration note for why folder-print presence isn't a reliable
+            // per-drive signal.
             try db.execute(
-                sql: "UPDATE drive SET lastScannedAt = ? WHERE id = ?",
+                sql: "UPDATE drive SET lastScannedAt = ?, contentScanned = 1 WHERE id = ?",
                 arguments: [Date(), driveId]
             )
         }
@@ -196,6 +200,8 @@ public actor Scanner {
         var ownExtensions: [String: (count: Int, bytes: Int64)] = [:]
         var ownBytes: Int64 = 0
         var ownFileCount = 0
+        /// Fingerprints of files directly in this folder, for content matching.
+        var ownPrints = Set<UInt64>()
 
         let keys: [URLResourceKey] = [
             .isDirectoryKey, .isPackageKey, .isSymbolicLinkKey,
@@ -284,6 +290,7 @@ public actor Scanner {
 
                 ownBytes += bytes
                 ownFileCount += 1
+                ownPrints.insert(FilePrint.of(name: entry.lastPathComponent, size: bytes))
                 let priorOwn = ownExtensions[ext] ?? (0, 0)
                 ownExtensions[ext] = (priorOwn.count + 1, priorOwn.bytes + bytes)
 
@@ -294,12 +301,14 @@ public actor Scanner {
             }
         }
 
-        // On the way back up: write the totals we could only know now.
+        // On the way back up: write the totals we could only know now, plus the
+        // packed file fingerprints for this folder's own files.
+        let printsBlob = ownPrints.isEmpty ? nil : FilePrint.pack(ownPrints)
         try db.execute(sql: """
             UPDATE folder
-            SET ownBytes = ?, totalBytes = ?, ownFileCount = ?, totalFileCount = ?
+            SET ownBytes = ?, totalBytes = ?, ownFileCount = ?, totalFileCount = ?, filePrints = ?
             WHERE id = ?
-            """, arguments: [ownBytes, aggregate.totalBytes, ownFileCount, aggregate.fileCount, folderId])
+            """, arguments: [ownBytes, aggregate.totalBytes, ownFileCount, aggregate.fileCount, printsBlob, folderId])
 
         try writeExtensions(
             db: db, folderId: folderId, own: ownExtensions, rollup: aggregate.extensions

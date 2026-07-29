@@ -137,6 +137,37 @@ public final class Store: Sendable {
             }
         }
 
+        // Per-folder file fingerprints (packed UInt64 blob) for content-based
+        // folder matching. NULL until the drive is rescanned — folders with no
+        // prints simply don't participate in content matching, which degrades to
+        // "not a detectable copy" rather than a wrong answer.
+        migrator.registerMigration("v5-file-prints") { db in
+            try db.alter(table: "folder") { t in
+                t.add(column: "filePrints", .blob)
+            }
+        }
+
+        // A drive-level flag for "scanned since fingerprinting existed".
+        //
+        // Presence of prints is NOT a reliable per-drive signal: leaf bundles
+        // (`.fcpbundle`) and folders whose files are all nested in subfolders
+        // legitimately have no own-prints, so a "folder with files but no
+        // prints" check flagged fully-scanned drives forever. This flag is set
+        // once, by the scanner, when a scan completes — unambiguous.
+        //
+        // Back-filled true for any drive that already has at least one
+        // fingerprinted folder, so drives rescanned under v5 don't demand yet
+        // another rescan.
+        migrator.registerMigration("v6-content-scanned") { db in
+            try db.alter(table: "drive") { t in
+                t.add(column: "contentScanned", .boolean).notNull().defaults(to: false)
+            }
+            try db.execute(sql: """
+                UPDATE drive SET contentScanned = 1
+                WHERE id IN (SELECT DISTINCT driveId FROM folder WHERE filePrints IS NOT NULL)
+                """)
+        }
+
         return migrator
     }
 

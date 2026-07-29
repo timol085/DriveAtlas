@@ -23,20 +23,34 @@ struct ContentView: View {
             DriveSidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .navigationTitle(navigationTitle)
-                .navigationSubtitle(navigationSubtitle)
-                // Always present, so the column count never changes. Its contents
-                // vary; its existence doesn't.
-                .inspector(isPresented: $showInspector) {
+            // The Drive Info panel is a trailing panel INSIDE the detail area,
+            // not a `.inspector` column. `.inspector` always shares the window
+            // toolbar, so it drew up alongside the search field. As a panel
+            // within the content it starts at the detail's top edge — level with
+            // the drive breadcrumb row — and never touches the toolbar/search.
+            HStack(spacing: 0) {
+                detail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if showInspector, model.selectedDrive != nil {
+                    Divider()
                     inspectorContent
-                        .inspectorColumnWidth(min: 260, ideal: 300)
+                        .frame(width: 300)
+                        .transition(.move(edge: .trailing))
                 }
-                .toolbar { toolbarContent }
+            }
+            .navigationTitle(navigationTitle)
+            .navigationSubtitle(navigationSubtitle)
+            .toolbar { toolbarContent }
         }
         .searchable(text: $model.searchQuery, prompt: "Search folders on every drive")
         .onChange(of: model.searchQuery) { _, _ in model.rerunSearch() }
+        // The inspector only has content for a selected drive. Switching to
+        // Backup Check (or search) would leave it open on an empty "no drive
+        // selected" pane, so close it whenever a drive isn't what's showing.
+        .onChange(of: model.selection) { _, _ in
+            if model.selectedDrive == nil { showInspector = false }
+        }
         .alert(
             "Something went wrong",
             isPresented: Binding(
@@ -76,14 +90,10 @@ struct ContentView: View {
 
     @ViewBuilder
     private var inspectorContent: some View {
+        // A drive is guaranteed selected — the panel only shows when it is — so
+        // no empty-state branch is needed.
         if let drive = model.selectedDrive {
             DriveInspector(model: model, drive: drive)
-        } else {
-            ContentUnavailableView(
-                "No drive selected",
-                systemImage: "externaldrive",
-                description: Text("Pick a drive in the sidebar to see its details.")
-            )
         }
     }
 
@@ -189,7 +199,7 @@ struct ContentView: View {
             // when scans finish, when a drive is forgotten, and on first visit —
             // and a second circular-arrow button next to Rescan read as a riddle.
             Button {
-                showInspector.toggle()
+                withAnimation(.easeOut(duration: 0.2)) { showInspector.toggle() }
             } label: {
                 Label("Drive Info", systemImage: "info.circle")
             }
