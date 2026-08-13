@@ -35,9 +35,26 @@ public final class DriveCatalog {
     /// can find and stop the right watcher.
     private var watchedPathToUUID: [String: String] = [:]
 
-    public init(store: Store) {
+    /// Pending debounced auto-rescans, keyed by volume identifier. Each detected
+    /// change cancels and reschedules the drive's task, so a rescan fires only
+    /// once activity has settled — not mid-import, and not once per file.
+    private var pendingRescans: [String: Task<Void, Never>] = [:]
+
+    /// How long a drive must be quiet (no further changes) before its automatic
+    /// rescan fires. Long enough that sustained work — a big paste, editing in
+    /// place — coalesces into one scan instead of thrashing; short enough to feel
+    /// automatic. Injectable so tests can use a tiny interval.
+    private let autoRescanQuietPeriod: Duration
+
+    /// What a settled quiet-period actually does. Defaults to a real rescan;
+    /// overridable so the debounce/coalesce behaviour is testable without a
+    /// mounted volume.
+    var autoRescanAction: ((String) -> Void)?
+
+    public init(store: Store, autoRescanQuietPeriod: Duration = .seconds(45)) {
         self.store = store
         self.scanner = Scanner(store: store)
+        self.autoRescanQuietPeriod = autoRescanQuietPeriod
     }
 
     public func start(
@@ -64,6 +81,8 @@ public final class DriveCatalog {
         watcher = nil
         for w in changeWatchers.values { w.stop() }
         changeWatchers.removeAll()
+        for t in pendingRescans.values { t.cancel() }
+        pendingRescans.removeAll()
     }
 
     /// Rescans a catalogued drive on demand, if its volume is currently mounted.
@@ -135,17 +154,44 @@ public final class DriveCatalog {
     private func stopChangeWatcher(forPath path: String) {
         guard let uuid = watchedPathToUUID.removeValue(forKey: path) else { return }
         changeWatchers.removeValue(forKey: uuid)?.stop()
+        // Drop any pending auto-rescan: the drive is gone. The persisted badge
+        // survives the unplug and reminds the user it never got rescanned.
+        pendingRescans.removeValue(forKey: uuid)?.cancel()
     }
 
     private func handleContentChange(volumeUUID: String, name: String) {
         // A scan already running will end clean, so don't flag mid-scan.
         guard !scanning.contains(volumeUUID) else { return }
+        // Show the badge right away — it's the fallback for the case the drive is
+        // unplugged before the debounced rescan below ever gets to run.
         try? store.markNeedsRescan(volumeUUID: volumeUUID)
         onActivity?(.driveChanged(name: name))
+        scheduleAutoRescan(volumeUUID: volumeUUID)
+    }
+
+    /// (Re)arms the quiet-period timer for a drive. Called on every detected
+    /// change, so a burst of changes collapses to a single rescan once things go
+    /// quiet. Internal for testing; not part of the public surface.
+    func scheduleAutoRescan(volumeUUID: String) {
+        pendingRescans[volumeUUID]?.cancel()
+        pendingRescans[volumeUUID] = Task { [weak self, autoRescanQuietPeriod] in
+            try? await Task.sleep(for: autoRescanQuietPeriod)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingRescans[volumeUUID] = nil
+            // rescan() no-ops if the drive was unplugged or is already scanning,
+            // and the scan itself clears the persisted flag on completion.
+            if let action = self.autoRescanAction {
+                action(volumeUUID)
+            } else {
+                self.rescan(volumeUUID: volumeUUID)
+            }
+        }
     }
 
     private func startScan(driveId: Int64, volume: MountedVolume, id: String, name: String) {
         scanning.insert(id)
+        // A scan is now covering this volume — any queued debounce is redundant.
+        pendingRescans.removeValue(forKey: id)?.cancel()
         onActivity?(.scanStarted(name: name))
 
         // Detached so the walk doesn't block the main actor — the UI keeps serving

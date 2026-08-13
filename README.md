@@ -34,6 +34,8 @@ macOS 14+, Swift 6. A SwiftUI menu bar app and a CLI, both over the same core.
 ## Contents
 
 - [Install](#install)
+  - [Option A — download a pre-built app](#option-a--download-a-pre-built-app)
+  - [Option B — build from source](#option-b--build-from-source)
 - [Using the app](#using-the-app)
   - [Quick Search](#quick-search) — the ⌃⌥Space panel
   - [Spotlight](#spotlight) — finding drives from ⌘Space
@@ -50,10 +52,71 @@ macOS 14+, Swift 6. A SwiftUI menu bar app and a CLI, both over the same core.
 
 ## Install
 
-Requires Xcode 16+ (for the Swift 6 toolchain). No other dependencies to install
-by hand and GRDB is fetched by SwiftPM.
+Two ways in, depending on how hands-on you want to be:
+
+- **[Download a build](#option-a--download-a-pre-built-app)** — grab the `.app`
+  and click through one macOS security prompt. No developer tools needed.
+- **[Build from source](#option-b--build-from-source)** — clone and run one
+  script. Never triggers a Gatekeeper prompt.
+
+Either way you get the same app. The only real difference is that first launch.
+
+### Option A — download a pre-built app
+
+*Best for: you just want to run it and can follow a one-time "allow it" step —
+no Xcode, no Terminal (usually).*
+
+1. Download `DriveAtlas.zip` from the
+   [**Releases**](https://github.com/timol085/DriveAtlas/releases) page and unzip it.
+2. Move `DriveAtlas.app` into `/Applications` (optional, but tidy).
+3. Double-click it. **macOS blocks it the first time** — the app is signed, but
+   not with a paid Apple Developer certificate, so Gatekeeper can't verify who
+   made it. This is expected, and you only clear it once.
+
+**The normal prompt — *"Apple could not verify… is free of malware":***
+
+   1. Click **Done** in that dialog (do *not* click "Move to Trash").
+   2. Open  → **System Settings → Privacy & Security**.
+   3. Scroll to the **Security** section. You'll see *"DriveAtlas was blocked to
+      protect your Mac."* Click **Open Anyway**.
+   4. Authenticate with Touch ID or your password, then click **Open Anyway**
+      once more.
+   5. It launches — and macOS remembers, so you won't be asked again.
+
+   > On macOS 15 (Sequoia) and later, the old *right-click → Open* shortcut no
+   > longer works for unverified apps. The Settings route above is the way in.
+
+**If you instead see *"DriveAtlas is damaged and can't be opened":***
+
+   Same block, scarier label — it does **not** mean the download is corrupt.
+   macOS occasionally shows this for apps signed without a paid certificate.
+   Clear the "downloaded from the internet" flag once, in Terminal:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/DriveAtlas.app
+   ```
+
+   Then double-click as normal. (Change the path if you didn't move it to
+   `/Applications`.)
+
+None of this bypasses real protection — you're vouching for an app you chose to
+download, the same as any tool distributed outside the App Store. DriveAtlas is
+[read-only by design](#read-only-by-design) and open-source, so every line it
+runs is right here to inspect.
+
+### Option B — build from source
+
+*Best for: you have Apple's developer tools (or don't mind installing them) and
+want zero security prompts — a locally built app is never flagged as "downloaded
+from the internet", so it just runs.*
+
+Requires the Swift 6 toolchain — Xcode 16+ or the standalone Command Line Tools
+(`xcode-select --install`). GRDB is the only dependency, and SwiftPM fetches it
+for you.
 
 ```sh
+git clone https://github.com/timol085/DriveAtlas.git
+cd DriveAtlas
 ./make-app.sh release
 open DriveAtlas.app
 ```
@@ -160,11 +223,16 @@ Backup Check, Spotlight donations, and the views all refresh automatically.
 **Change detection while connected.** If you add, remove, or edit files on a
 drive while it's plugged in *and DriveAtlas is running*, it notices (via
 FSEvents) and marks that drive **"Changed — rescan to update"** in the sidebar.
-It never rescans on its own — the badge is a nudge, so you don't unplug assuming
-the catalog updated itself when it hasn't. Clear it with a rescan. The flag is
-persisted, so it stays visible even after you unplug, and clears on the next
-scan. (Changes made while DriveAtlas is closed are caught by the automatic
-rescan on next connect instead.)
+Then, once the drive has been **quiet for ~45 seconds** (so a big paste or an
+edit-in-place session collapses into one scan rather than thrashing), it
+**rescans automatically** and the badge clears. The quiet-period wait is
+deliberate: it keeps a spinning HDD from spinning up on every single change.
+
+The badge is also the safety net. If you unplug before the automatic rescan
+runs — the exact "changed it, then disconnected, assumed it updated" case — the
+flag is *persisted*, so it stays visible on the (now offline) drive and clears
+only on the next real scan. (Changes made while DriveAtlas is closed are caught
+by the automatic rescan on next connect instead.)
 
 **Drive Info** (the ⓘ button) is where you correct what macOS couldn't detect:
 the SSD/HDD type and the purchase date. Both matter; see
@@ -531,9 +599,36 @@ make-app.sh            assembles DriveAtlas.app
 
 ```sh
 swift build            # library + CLI + app binary
-swift test             # 46 tests
+swift test             # 101 tests
 ./make-app.sh release  # the .app bundle
 ```
+
+`make-app.sh` relaunches a *running* instance onto the fresh binary, so you don't
+keep testing yesterday's build after a rebuild. Set `NO_RELAUNCH=1` to skip that
+(e.g. when building a release artifact headlessly).
+
+### Cutting a release
+
+The download offered in [Option A](#option-a--download-a-pre-built-app) is just a
+zipped, ad-hoc-signed `.app`. To publish a new one:
+
+```sh
+# 1. Bump the version in make-app.sh (CFBundleShortVersionString / CFBundleVersion).
+# 2. Build the optimised bundle without disturbing your running copy:
+NO_RELAUNCH=1 ./make-app.sh release
+# 3. Zip with ditto — it preserves the code signature and macOS metadata that a
+#    plain `zip` can strip, which is what turns a download into "damaged":
+ditto -c -k --keepParent DriveAtlas.app DriveAtlas.zip
+```
+
+Then draft a **GitHub Release**, tag it (e.g. `v0.1`), and attach `DriveAtlas.zip`.
+Both `DriveAtlas.app/` and `DriveAtlas.zip` are git-ignored — build output, not
+source.
+
+The build is only ad-hoc signed, so each user clears Gatekeeper once by hand; the
+[install guide](#option-a--download-a-pre-built-app) walks them through it.
+Notarising (a paid Apple Developer ID) is what would make the download
+double-click-clean — worth it only once the audience outgrows "click Open Anyway".
 
 Domain rules live in `DriveMapperCore` specifically so they can be tested and the
 app target has no test coverage, which is how the drive-age bug survived as long

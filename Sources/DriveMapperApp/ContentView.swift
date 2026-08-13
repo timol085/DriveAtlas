@@ -441,6 +441,16 @@ struct DriveContentView: View {
     let ascending: Bool
 
     var body: some View {
+        VStack(spacing: 0) {
+            if let status = model.scanStatus(for: drive) {
+                ScanningBanner(driveName: drive.name, foldersScanned: status.foldersScanned)
+            }
+            tree
+        }
+    }
+
+    @ViewBuilder
+    private var tree: some View {
         switch mode {
         case .list:
             FolderTreeView(drive: drive, store: model.store, sort: sort, ascending: ascending)
@@ -449,6 +459,33 @@ struct DriveContentView: View {
         case .treemap:
             TreemapView(drive: drive, store: model.store)
         }
+    }
+}
+
+/// Shown across the top of a drive's detail while it's being scanned. Advisory,
+/// not a warning: the scan is read-only and rolls back cleanly if the drive is
+/// pulled, so the honest message is "keep it connected so the update finishes",
+/// never "don't remove or you'll lose data".
+struct ScanningBanner: View {
+    let driveName: String
+    let foldersScanned: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("Scanning \(driveName) — keep it connected so this finishes")
+                .font(.callout)
+            Spacer(minLength: 8)
+            Text("\(foldersScanned) folders")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppColor.accent.opacity(0.12))
+        .overlay(alignment: .bottom) { Divider() }
+        .help("DriveAtlas only reads the drive. Unplugging now won't harm it — the scan just rolls back and you keep the previous catalog.")
     }
 }
 

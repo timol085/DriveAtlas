@@ -86,6 +86,19 @@ PLIST
 codesign --force --deep --sign - "$APP" 2>/dev/null || \
     echo "  (ad-hoc signing failed — the app will still run)"
 
+# Relaunch a running instance onto the fresh binary. The bundle doesn't hot-swap
+# a running process, so without this you'd keep testing the OLD build after a
+# rebuild — a genuinely easy way to lose half an hour. Only fires if an instance
+# is already running, so headless builds (e.g. producing a release zip) stay
+# quiet; set NO_RELAUNCH=1 to opt out entirely.
+PROC="$APP/Contents/MacOS/DriveAtlas"
+if [ "${NO_RELAUNCH:-0}" != "1" ] && pgrep -f "$PROC" >/dev/null 2>&1; then
+    echo "Relaunching running instance onto the new build..."
+    pkill -f "$PROC" 2>/dev/null || true
+    sleep 1
+    open "$APP"
+fi
+
 echo
 echo "Built $APP"
 echo "  open $APP          # launch it"

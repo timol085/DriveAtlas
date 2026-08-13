@@ -12,6 +12,9 @@ Packages/
 # Build output. `./make-app.sh` regenerates it.
 DriveAtlas.app/
 
+# Release artifact — zipped and uploaded to GitHub Releases, not committed.
+DriveAtlas.zip
+
 # Generated from the source PNG by Tools/makeicon.swift on every build where the
 # art is newer. The PNG is the source of truth and stays in the repo.
 AppIcon.icns
