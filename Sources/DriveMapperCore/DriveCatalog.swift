@@ -14,6 +14,9 @@ public final class DriveCatalog {
         case scanFinished(name: String, summary: Scanner.Summary)
         case scanFailed(name: String, error: String)
         case driveDisconnected(path: String)
+        /// The live watcher saw this mounted drive's contents change; its catalog
+        /// is now stale.
+        case driveChanged(name: String)
     }
 
     public let store: Store
@@ -24,6 +27,13 @@ public final class DriveCatalog {
     /// Drives currently being scanned, so a duplicate mount notification doesn't
     /// start a second concurrent walk of the same volume.
     private var scanning: Set<String> = []
+
+    /// One live FSEvents watcher per mounted, catalogued drive, keyed by volume
+    /// identifier. Started on connect, stopped on disconnect.
+    private var changeWatchers: [String: DriveChangeWatcher] = [:]
+    /// Mount path → volume identifier, so an unmount (which only gives a path)
+    /// can find and stop the right watcher.
+    private var watchedPathToUUID: [String: String] = [:]
 
     public init(store: Store) {
         self.store = store
@@ -41,6 +51,7 @@ public final class DriveCatalog {
             case .mounted(let volume):
                 self.handleMount(volume, rescanKnown: rescanKnownDrives)
             case .unmounted(let url):
+                self.stopChangeWatcher(forPath: url.path)
                 onActivity(.driveDisconnected(path: url.path))
             }
         }
@@ -51,6 +62,8 @@ public final class DriveCatalog {
     public func stop() {
         watcher?.stop()
         watcher = nil
+        for w in changeWatchers.values { w.stop() }
+        changeWatchers.removeAll()
     }
 
     /// Rescans a catalogued drive on demand, if its volume is currently mounted.
@@ -93,11 +106,42 @@ public final class DriveCatalog {
             )
             onActivity?(.driveConnected(name: name, alreadyKnown: known))
 
+            // Begin watching this mounted drive for content changes. Starting
+            // (or restarting) here is idempotent and covers reconnects.
+            startChangeWatcher(volumeUUID: id, volumePath: volume.url.path, name: name)
+
             guard !known || rescanKnown, let driveId = drive.id else { return }
             startScan(driveId: driveId, volume: volume, id: id, name: name)
         } catch {
             onActivity?(.scanFailed(name: name, error: "\(error)"))
         }
+    }
+
+    // MARK: - Live change watching
+
+    private func startChangeWatcher(volumeUUID: String, volumePath: String, name: String) {
+        changeWatchers[volumeUUID]?.stop()
+        let watcher = DriveChangeWatcher(volumePath: volumePath) { [weak self] in
+            // FSEvents delivers on a background queue; hop to the main actor.
+            Task { @MainActor in
+                self?.handleContentChange(volumeUUID: volumeUUID, name: name)
+            }
+        }
+        changeWatchers[volumeUUID] = watcher
+        watchedPathToUUID[volumePath] = volumeUUID
+        watcher.start()
+    }
+
+    private func stopChangeWatcher(forPath path: String) {
+        guard let uuid = watchedPathToUUID.removeValue(forKey: path) else { return }
+        changeWatchers.removeValue(forKey: uuid)?.stop()
+    }
+
+    private func handleContentChange(volumeUUID: String, name: String) {
+        // A scan already running will end clean, so don't flag mid-scan.
+        guard !scanning.contains(volumeUUID) else { return }
+        try? store.markNeedsRescan(volumeUUID: volumeUUID)
+        onActivity?(.driveChanged(name: name))
     }
 
     private func startScan(driveId: Int64, volume: MountedVolume, id: String, name: String) {

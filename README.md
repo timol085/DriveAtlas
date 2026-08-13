@@ -157,6 +157,15 @@ in the sidebar) after changing its contents — deleting duplicates, adding a
 shoot. Unplugging and replugging does the same thing. When a rescan finishes,
 Backup Check, Spotlight donations, and the views all refresh automatically.
 
+**Change detection while connected.** If you add, remove, or edit files on a
+drive while it's plugged in *and DriveAtlas is running*, it notices (via
+FSEvents) and marks that drive **"Changed — rescan to update"** in the sidebar.
+It never rescans on its own — the badge is a nudge, so you don't unplug assuming
+the catalog updated itself when it hasn't. Clear it with a rescan. The flag is
+persisted, so it stays visible even after you unplug, and clears on the next
+scan. (Changes made while DriveAtlas is closed are caught by the automatic
+rescan on next connect instead.)
+
 **Drive Info** (the ⓘ button) is where you correct what macOS couldn't detect:
 the SSD/HDD type and the purchase date. Both matter; see
 [Design notes](#design-notes).

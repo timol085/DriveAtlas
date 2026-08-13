@@ -153,6 +153,21 @@ struct ScannerTests {
 
     // MARK: - Mid-scan failure
 
+    @Test("A completed scan clears the needs-rescan flag")
+    func scanClearsStaleFlag() async throws {
+        let fixture = try Fixture()
+        let (store, driveId) = try makeStore()
+        // The live watcher flagged this drive as changed…
+        try store.markNeedsRescan(volumeUUID: "TEST-UUID")
+        #expect(try #require(try store.drive(volumeUUID: "TEST-UUID")).needsRescan == true)
+
+        // …and a scan brings the catalogue back in sync, so the flag clears.
+        let scanner = Scanner(store: store)
+        try await scanner.scan(volumeURL: fixture.root, driveId: driveId)
+
+        #expect(try #require(try store.drive(volumeUUID: "TEST-UUID")).needsRescan == false)
+    }
+
     @Test("Scanning a vanished volume preserves the previous catalogue")
     func vanishedVolumePreservesCatalog() async throws {
         let fixture = try Fixture()

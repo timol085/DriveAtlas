@@ -168,6 +168,14 @@ public final class Store: Sendable {
                 """)
         }
 
+        // "Catalog is stale" flag, set by the live change-watcher, cleared by a
+        // scan. Persisted so it survives unplugging.
+        migrator.registerMigration("v7-needs-rescan") { db in
+            try db.alter(table: "drive") { t in
+                t.add(column: "needsRescan", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         return migrator
     }
 
@@ -288,6 +296,16 @@ public final class Store: Sendable {
     public func drive(volumeUUID: String) throws -> Drive? {
         try dbWriter.read { db in
             try Drive.filter(Drive.Columns.volumeUUID == volumeUUID).fetchOne(db)
+        }
+    }
+
+    /// Flags a drive's catalog as stale (the change-watcher saw a modification).
+    public func markNeedsRescan(volumeUUID: String) throws {
+        try dbWriter.write { db in
+            try db.execute(
+                sql: "UPDATE drive SET needsRescan = 1 WHERE volumeUUID = ?",
+                arguments: [volumeUUID]
+            )
         }
     }
 

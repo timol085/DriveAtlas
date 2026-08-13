@@ -323,6 +323,14 @@ struct DriveRow: View {
                     Text("Scanning… \(status.foldersScanned) folders")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                } else if drive.needsRescan {
+                    // The live watcher saw a change since the last scan — the
+                    // catalog for this drive is known-stale. Rescan via the
+                    // toolbar button or right-click → Rescan Now.
+                    Label("Changed — rescan to update", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(AppColor.warning)
+                        .help("Its contents changed since the last scan. Rescan to update the catalog.")
                 } else {
                     HStack(spacing: 4) {
                         Image(systemName: drive.kindSymbol)
@@ -345,7 +353,11 @@ struct DriveRow: View {
 
             Spacer()
 
-            if drive.showsAgeWarning {
+            if drive.needsRescan && status == nil {
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                    .foregroundStyle(AppColor.warning)
+                    .help("Contents changed since last scan — rescan to update.")
+            } else if drive.showsAgeWarning {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.yellow)
                     .help("This SSD is 5+ years old — worth verifying your backups.")

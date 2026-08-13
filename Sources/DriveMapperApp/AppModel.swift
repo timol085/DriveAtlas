@@ -105,6 +105,10 @@ final class AppModel {
                 self.lastError = "\(name): \(error)"
             case .driveDisconnected:
                 self.refreshDrives()
+            case .driveChanged:
+                // The store's needsRescan flag is now set; reload so the sidebar
+                // badge appears.
+                self.refreshDrives()
             }
             self.onActivityChanged?()
         }
