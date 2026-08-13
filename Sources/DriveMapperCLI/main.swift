@@ -127,6 +127,8 @@ case "watch":
             print("  \(name) FAILED: \(error)")
         case .driveDisconnected(let path):
             print("← disconnected: \(path)")
+        case .driveChanged(let name):
+            print("~ changed: \(name) (catalog now stale — rescan)")
         }
     }
     runForever()

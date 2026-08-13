@@ -152,7 +152,7 @@ public actor Scanner {
             // migration note for why folder-print presence isn't a reliable
             // per-drive signal.
             try db.execute(
-                sql: "UPDATE drive SET lastScannedAt = ?, contentScanned = 1 WHERE id = ?",
+                sql: "UPDATE drive SET lastScannedAt = ?, contentScanned = 1, needsRescan = 0 WHERE id = ?",
                 arguments: [Date(), driveId]
             )
         }

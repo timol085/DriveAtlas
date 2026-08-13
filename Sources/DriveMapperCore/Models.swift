@@ -38,6 +38,12 @@ public struct Drive: Codable, Identifiable, Equatable, Sendable {
     public var volumeCreatedAt: Date?
     /// User-entered. The only genuinely accurate age signal available.
     public var purchasedOn: Date?
+    /// Set when the live change-watcher saw the drive's contents change after the
+    /// last scan, so the catalog is known-stale. Persisted so the flag survives
+    /// unplugging — the offline view can then honestly say "changed, rescan"
+    /// instead of showing data the user already knows is out of date. Cleared
+    /// when a scan completes.
+    public var needsRescan: Bool
 
     public init(
         id: Int64? = nil,
@@ -53,7 +59,8 @@ public struct Drive: Codable, Identifiable, Equatable, Sendable {
         lastSeenAt: Date = Date(),
         lastScannedAt: Date? = nil,
         volumeCreatedAt: Date? = nil,
-        purchasedOn: Date? = nil
+        purchasedOn: Date? = nil,
+        needsRescan: Bool = false
     ) {
         self.id = id
         self.volumeUUID = volumeUUID
@@ -69,6 +76,7 @@ public struct Drive: Codable, Identifiable, Equatable, Sendable {
         self.lastScannedAt = lastScannedAt
         self.volumeCreatedAt = volumeCreatedAt
         self.purchasedOn = purchasedOn
+        self.needsRescan = needsRescan
     }
 
     /// Manual override wins; falls back to detection; `nil` when genuinely unknown.

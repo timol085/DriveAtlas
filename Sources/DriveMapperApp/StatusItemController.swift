@@ -61,6 +61,11 @@ final class StatusItemController {
 
     private func updateIcon(scanning: Bool) {
         statusItem.button?.image = Self.statusImage(scanning: scanning)
+        // The window is often closed during a background scan, so the menu-bar
+        // icon is the only place the "keep it connected" hint can reach.
+        statusItem.button?.toolTip = scanning
+            ? "DriveAtlas is scanning a drive — keep it connected so the update finishes."
+            : nil
     }
 
     private static func statusImage(scanning: Bool) -> NSImage? {

@@ -345,6 +345,38 @@ struct StoreTests {
         #expect(try store.searchFolders("Untitled").isEmpty)
     }
 
+    // MARK: - Needs-rescan flag
+
+    @Test("A fresh drive isn't flagged for rescan")
+    func newDriveNotStale() throws {
+        let store = try Store()
+        let drive = try store.recordSighting(volumeUUID: "UUID-1", name: "Backup4TB")
+        #expect(drive.needsRescan == false)
+    }
+
+    @Test("markNeedsRescan sets the flag and it survives across loads")
+    func markNeedsRescanPersists() throws {
+        let store = try Store()
+        try store.recordSighting(volumeUUID: "UUID-1", name: "Backup4TB")
+
+        try store.markNeedsRescan(volumeUUID: "UUID-1")
+
+        let reloaded = try #require(try store.drive(volumeUUID: "UUID-1"))
+        #expect(reloaded.needsRescan == true)
+    }
+
+    @Test("Recording a sighting doesn't clear an existing rescan flag")
+    func sightingKeepsStaleFlag() throws {
+        // A drive changed, was unplugged, then plugged back in: it's still stale
+        // until an actual scan runs, so a bare reconnect must not clear the flag.
+        let store = try Store()
+        try store.recordSighting(volumeUUID: "UUID-1", name: "Backup4TB")
+        try store.markNeedsRescan(volumeUUID: "UUID-1")
+
+        let after = try store.recordSighting(volumeUUID: "UUID-1", name: "Backup4TB")
+        #expect(after.needsRescan == true)
+    }
+
     // MARK: - Helper
 
     @discardableResult
