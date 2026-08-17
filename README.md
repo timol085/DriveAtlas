@@ -14,6 +14,9 @@ macOS 14+, Swift 6. A SwiftUI menu bar app and a CLI, both over the same core.
 
 - **Auto-catalogs on connect.** Plug in a drive and it's scanned in the
   background — no action needed. The catalog survives after you unplug it.
+- **Notices changes while connected.** Edit a drive with DriveAtlas running and
+  it re-scans itself once activity settles, so the catalog doesn't go silently
+  stale; unplug before it does and the drive stays flagged until its next scan.
 - **Quick Search from anywhere.** A ⌃⌥Space floating panel (or a click on the
   menu bar icon) finds a folder across every drive without opening a window or
   switching apps — and tells you which drive it's on.
@@ -147,11 +150,14 @@ in `make-app.sh` and rebuild.
 
 ## Using the app
 
-DriveAtlas needs to be running to notice a drive being connected. It lives in
-the menu bar; the window is optional and can be closed. Turn on **Launch at
-Login** (the ••• button in Quick Search) so that's true without you remembering
-to open it — everything ambient (auto-scanning a plugged-in drive, the hotkey,
-fresh Spotlight donations) depends on the process actually being alive.
+DriveAtlas needs to be running to notice a drive being connected. By default it
+shows in both the Dock and the menu bar, and the window is optional — close it
+and everything still runs from the menu bar icon. (Prefer a menu-bar-only
+background agent with no Dock presence? See [Background agent](#background-agent).)
+Turn on **Launch at Login** (the ••• button in Quick Search) so it's always
+running without you remembering to open it — everything ambient (auto-scanning a
+plugged-in drive, the hotkey, fresh Spotlight donations) depends on the process
+actually being alive.
 
 **Plug in a drive** → it's detected, added to the sidebar, and scanned in the
 background. The menu bar icon changes while a scan runs. You can browse the
@@ -323,7 +329,7 @@ write targets in the codebase:
 | Debug snapshots (`DebugBridge`) | `…/DriveAtlas/debug/`                       |
 | One-time rename migration       | inside `Application Support` only           |
 
-**The only subprocess it launches is `diskutil info`** is purely informational.
+**The only subprocess it launches, `diskutil info`, is purely informational.**
 No code path invokes mount, unmount, erase, or partition operations.
 
 **"Forget drive" and rescans delete database rows**, never files on any volume.
@@ -363,6 +369,7 @@ see [Not built yet](#not-built-yet).
 | `DriveMetadata` | Drive type/size/protocol from `diskutil`, plus disk-image filtering |
 | `VolumeWatcher` | Mount/unmount notifications                                         |
 | `DriveCatalog`  | Ties them together — plug in a drive, it gets catalogued            |
+| `DriveChangeWatcher` | FSEvents watch on a mounted drive — flags it stale and triggers the debounced auto-rescan when its contents change |
 | `AppModel`      | Observable state for the UI                                         |
 | `SpotlightIndexer` | Donates the catalog to system Spotlight, per-drive domains       |
 | `StatusItemController` | Owns the menu bar icon directly via `NSStatusItem` — click routing, the right-click menu |
@@ -377,8 +384,8 @@ on the way back up. Rollups are accumulated during the walk because computing
 them afterwards would mean a second full pass.
 
 **A failed scan rolls back.** The delete-and-rebuild happens in one transaction,
-and the scan aborts, preserving the previous catalogue and if the volume's root
-can't be read or the volume is gone by commit time. Without that, unplugging a
+so if the volume's root can't be read or the volume is gone by commit time, the
+scan aborts and the previous catalogue is preserved. Without that, unplugging a
 drive mid-scan silently replaced its catalogue with a nearly-empty husk: every
 directory read failed and each was recorded as an empty folder.
 `ScannerTests.midScanUnplugRollsBack` simulates the yanked cable.
@@ -443,25 +450,29 @@ That's also why the list is flattened into plain rows rather than using
 
 **The map caps siblings at 40 per node**, with a "+N folders" marker. Past that
 the diagram stops being readable well before it stops being fast. Children are
-sorted by size before the cap applies, so it always hides the smallest sorting
-by name and truncating meant the biggest folder on the drive could vanish for
-starting with "z". Hovering the marker lists what's behind it. That marker means
+sorted by size before the cap applies, so it always hides the smallest — sorting
+by name and truncating instead meant the biggest folder on the drive could
+vanish just for starting with "z". Hovering the marker lists what's behind it. That marker means
 _folders_; files are never nodes in the map.
 
-**The treemap uses exactly four colours.** A treemap is an "all-pairs" case and any
-rectangle can end up beside any other and the categorical palette stops
-clearing colourblind separation past four slots. So the drive's four biggest file
-types get hues and everything else folds into a neutral "Other". A fifth hue
-would look fine to most people and be unreadable to some. Slots are assigned per
-drive, so a colour means the same thing however deep you drill.
+**The treemap uses three file-type colours plus a neutral "Other".** A treemap is
+an "all-pairs" case — any rectangle can end up beside any other — and the
+categorical palette stops clearing colourblind separation past a few slots. So the
+drive's three biggest file types get hues (blue, a deep green, a rose) and everything
+else folds into a neutral "Other". There's deliberately no fourth file-type hue:
+the validator rejects every candidate next to those three (violet≈blue, red≈magenta,
+the teal region collapsing against magenta for deutan viewers — all measured), so a
+fourth colour would be one some people couldn't distinguish. The amber that once
+held a fourth slot is now reserved for the **drive-root** tile, which is safe
+because the root is never identified by colour alone — unique icon, position, and
+legend entry. Slots are assigned per drive, so a colour means the same thing
+however deep you drill.
 
 Palette values come from a validated reference palette, checked under `--pairs
-all` in both light and dark modes. Two warnings came back and both are handled by
-the same measure: light-mode magenta and yellow fall under 3:1 against the
-surface (needs "relief", visible labels), and the dark-mode yellow/green pair
-lands in the 6–8 CVD band (legal only with secondary encoding). Every tile
-therefore carries a visible label, tiles are separated by a 2px gap, and a legend
-is always present. **Don't remove the tile labels.**
+all` in both light and dark modes. Where a pair lands in a marginal contrast or
+CVD band, one measure covers it: every tile carries a visible label, tiles are
+separated by a 2px gap, and a legend is always present. **Don't remove the tile
+labels.**
 
 **Creation dates arrived in schema v3**, after the first scans were written.
 Folders catalogued before that carry `NULL` and show as "unknown" until their
@@ -587,7 +598,7 @@ benefit. Everything user-facing says DriveAtlas.
 
 ```
 Sources/
-  DriveMapperCore/     Store, Scanner, DriveMetadata, VolumeWatcher, DriveCatalog
+  DriveMapperCore/     Store, Scanner, DriveMetadata, VolumeWatcher, DriveChangeWatcher, DriveCatalog
   DriveMapperApp/      SwiftUI views, AppModel
   DriveMapperCLI/      the driveatlas CLI
 Tests/

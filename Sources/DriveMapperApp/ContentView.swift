@@ -455,7 +455,13 @@ struct DriveContentView: View {
         case .list:
             FolderTreeView(drive: drive, store: model.store, sort: sort, ascending: ascending)
         case .graph:
+            // Keyed on the drive so switching drives mounts a fresh graph: its
+            // pan/zoom and one-shot zoom-to-fit reset per drive, otherwise the new
+            // drive's tree inherited the previous one's scale and offset (the fit
+            // only re-runs on a size change, and the window doesn't resize when you
+            // switch drives).
             GraphTreeView(drive: drive, store: model.store)
+                .id(drive.volumeUUID)
         case .treemap:
             TreemapView(drive: drive, store: model.store)
         }

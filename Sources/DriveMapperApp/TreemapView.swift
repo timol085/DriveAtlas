@@ -147,7 +147,10 @@ struct TreemapView: View {
 
     private var legendBar: some View {
         HStack(spacing: 14) {
-            ExtensionLegendView(legend: legend)
+            ExtensionLegendView(
+                legend: legend,
+                includesPackage: tiles.contains { $0.slot == TreemapPalette.bundleSlot }
+            )
 
             Spacer()
 
@@ -236,12 +239,19 @@ struct TreemapView: View {
                 continue
             }
             let ext = dominant[id]
+            // A package (.fcpbundle, .photoslibrary, .app) is a self-contained
+            // thing, not a folder-of-files — and its type never enters the top-3
+            // tally, so it would otherwise always fall to grey "Other" regardless
+            // of size. Give it the reserved amber instead.
+            let slot = folder.isLeafBundle
+                ? TreemapPalette.bundleSlot
+                : (ext.flatMap { palette[$0] } ?? -1)
             result.append(Tile(
                 id: id,
                 folder: folder,
                 rect: inset,
-                ext: ext,
-                slot: ext.flatMap { palette[$0] } ?? -1,
+                ext: folder.isLeafBundle ? folder.name.split(separator: ".").last.map(String.init) : ext,
+                slot: slot,
                 canDrill: !folder.isLeafBundle && ((try? store.hasChildren(id)) ?? false)
             ))
         }
@@ -434,6 +444,9 @@ struct ExtensionLegendView: View {
     /// The node map draws the drive root in its reserved colour; the treemap
     /// never draws the root as a tile, so it leaves this off.
     var includesDrive = false
+    /// The treemap paints leaf bundles (packages) in that same reserved amber —
+    /// set when any are on screen, so the amber has a legend entry of its own.
+    var includesPackage = false
 
     var body: some View {
         HStack(spacing: 14) {
@@ -445,6 +458,9 @@ struct ExtensionLegendView: View {
                     TreemapPalette.color(slot: entry.slot),
                     entry.ext.isEmpty ? "no extension" : ".\(entry.ext)"
                 )
+            }
+            if includesPackage {
+                swatch(TreemapPalette.color(slot: TreemapPalette.bundleSlot), "Package")
             }
             if !legend.isEmpty {
                 swatch(TreemapPalette.other, "Other")
@@ -466,12 +482,15 @@ struct ExtensionLegendView: View {
 
 // MARK: - Palette
 
-/// Validated categorical palette, four slots plus a neutral "Other".
+/// Validated categorical palette, three file-type slots plus a neutral "Other".
 ///
-/// Values come from the reference palette and were checked with the six-check
-/// validator under `--pairs all` (a treemap is an all-pairs case) in both light
-/// and dark modes. Don't add a fifth hue: the palette stops clearing colourblind
-/// separation past four slots, which is why everything else folds to "Other".
+/// Values were checked under `--pairs all` (a treemap is an all-pairs case) in both
+/// light and dark modes. The current trio — blue, a deepened green, and the rose —
+/// clears CVD ΔE ≈ 13 (light) / ≈ 12 (dark), comfortably past the ≥ 8 target, up
+/// from the earlier palette's 7.6 floor (the deepened green is what bought the
+/// margin). Don't add a fourth hue: no
+/// candidate clears colourblind separation next to these three (see `slotCount`),
+/// which is why everything else folds to "Other".
 enum TreemapPalette {
     /// Three file-type slots, not four. The amber that held slot 3 now belongs
     /// to the drive root (user request), and no replacement hue exists: the
@@ -483,11 +502,20 @@ enum TreemapPalette {
     /// colour someone can't distinguish.
     static let slotCount = 3
 
+    /// Sentinel slot for leaf bundles (`.fcpbundle`, `.photoslibrary`, `.app`).
+    /// A package is a self-contained thing, not a file-type, and its bytes never
+    /// enter the top-3 tally — so without this it always renders as grey "Other",
+    /// however large. It wears the reserved amber instead. Amber's weaker CVD
+    /// separation is fine here for the same reason the drive root gets away with
+    /// it: every tile is labelled, so identity never rests on colour alone.
+    static let bundleSlot = -2
+
     static func color(slot: Int) -> Color {
         switch slot {
         case 0: dynamic(light: 0x2a78d6, dark: 0x3987e5)   // blue
-        case 1: dynamic(light: 0x008300, dark: 0x008300)   // green
-        case 2: dynamic(light: 0xe87ba4, dark: 0xd55181)   // magenta
+        case 1: dynamic(light: 0x006a1e, dark: 0x0a7a2e)   // green  (deepened)
+        case 2: dynamic(light: 0xe87ba4, dark: 0xd55181)   // rose
+        case Self.bundleSlot: driveRoot                     // packages: reserved amber
         default: other
         }
     }
@@ -508,14 +536,16 @@ enum TreemapPalette {
     /// mode (white ink).
     static let driveRootInk = dynamic(light: 0x1a1a19, dark: 0xffffff)
 
-    /// Black or white, whichever reads on the given fill.
+    /// Black or white, whichever reads on the given fill — chosen by WCAG contrast,
+    /// not by eye. Blue and the deepened green are dark fills (white ink ≥5:1); the
+    /// rose takes dark ink in both modes (~6.5:1 light / ~4.4:1 dark, both better
+    /// than white on it). "Other" grey flips with the mode.
     static func ink(onSlot slot: Int) -> Color {
-        // The light-mode magenta and yellow are bright enough to need dark ink;
-        // blue and green need light ink. Slot -1 (grey) takes dark in light mode.
         switch slot {
         case 0, 1: return .white
-        case 2, 3: return dynamic(light: 0x1a1a19, dark: 0xffffff)
-        default: return dynamic(light: 0x1a1a19, dark: 0xffffff)
+        case 2: return Color(nsColor: NSColor(rgb: 0x1a1a19))     // rose: light in both modes
+        case Self.bundleSlot: return driveRootInk                 // amber: dark ink / white in dark
+        default: return dynamic(light: 0x1a1a19, dark: 0xffffff)  // "Other" grey
         }
     }
 
